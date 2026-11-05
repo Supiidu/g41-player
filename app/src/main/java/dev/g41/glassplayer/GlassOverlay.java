@@ -55,7 +55,7 @@ import java.util.Locale;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * v0.6 — Figma Edition: FFT/waveform-driven waves + album-color accents.
+ * v0.7 — Figma Edition: CAVA-style FFT bars + album-color accents.
  * Original wallpaper is visible through a TRANSPARENT fullscreen overlay;
  * the giant clock is temporarily hidden only if a narrowly identified
  * large-clock View can be found. Restores alpha on close.
@@ -129,7 +129,7 @@ public final class GlassOverlay {
             }
             glassSurface.animateFrame(selected == AUDIO_FFT ? fftBands : null,
                     selected == AUDIO_WAVEFORM ? waveformEnergy : 0f, selected);
-            MAIN.postDelayed(this, 33L); // ~30 FPS only while playing
+            MAIN.postDelayed(this, 20L); // ~50 FPS only while playing and expanded
         }
     };
 
@@ -178,7 +178,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.6");
+            lp.setTitle("G41 Glass Player v0.7");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -192,10 +192,10 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.6 ABERTO (clock preservado no fechamento, ondas por audio, paleta da capa)");
+            Log.i(TAG, "GLASS V0.7 ABERTO (clock restauravel, CAVA FFT, paleta da capa)");
             return true;
         } catch (Throwable t) {
-            Log.e(TAG, "Overlay v0.5 falhou; mantendo player original", t);
+            Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
             if (candidate != null && wm != null) {
                 try { wm.removeViewImmediate(candidate); } catch (Throwable ignored) { }
             }
@@ -220,7 +220,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.6 FECHADO: clock e lockscreen restaurados");
+        Log.i(TAG, "GLASS V0.7 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
@@ -662,94 +662,194 @@ public final class GlassOverlay {
         }
     }
 
-    /** Two audio-reactive waves with no procedurally invented beat when capture fails. */
+    /**
+     * v0.7: CAVA-style equalizer. 36 rounded bars, logarithmic FFT data from
+     * the existing v0.6 audio pipeline, fast attack / gravity release, peak hold,
+     * automatic sensitivity and a gradient derived from the actual album cover.
+     * The RMS fallback reacts only to measured volume (not invented frequency).
+     */
     private static final class GlassSurface extends View {
-        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final Path wave = new Path();
-        final float[] smoothBands = new float[BAND_COUNT];
-        float phase = 0f;
-        float smoothRms = 0f;
-        int upperWaveColor = 0x9497B1D7;
-        int lowerWaveColor = 0x6094ACD1;
+        private static final int BARS = 36;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final float[] levels = new float[BARS];
+        private final float[] peaks = new float[BARS];
+        private final int[] peakHold = new int[BARS];
+        private final boolean mirrored;
+        private final float sensitivity;
+        private float autoGain = 1f;
+        private int color = BLUE;
+        private Shader barGradient;
+        private float gradientTop, gradientBottom;
 
         GlassSurface(Context c) {
             super(c);
             setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            mirrored = Settings.Global.getInt(c.getContentResolver(),
+                    "g41_glass_cava_mirror", 0) == 1;
+            float requested = Settings.Global.getFloat(c.getContentResolver(),
+                    "g41_glass_cava_sensitivity", 1f);
+            sensitivity = Math.max(0.5f, Math.min(2.5f, requested));
             setAccent(accentColor);
+            Log.i(TAG, "CAVA v0.7: " + BARS + " barras, estilo="
+                    + (mirrored ? "ESPELHADO" : "CLASSICO")
+                    + " sensibilidade=" + sensitivity);
         }
 
-        void setAccent(int color) {
-            upperWaveColor = Color.argb(135, Color.red(color), Color.green(color), Color.blue(color));
-            lowerWaveColor = Color.argb(75, Color.red(color), Color.green(color), Color.blue(color));
+        void setAccent(int next) {
+            color = next;
+            barGradient = null; // recreate on next render, not on every frame
             invalidate();
         }
 
+        @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            barGradient = null;
+        }
+
+        private float sampleBand(float[] fft, float position) {
+            int left = Math.max(0, Math.min(BAND_COUNT - 1, (int) position));
+            int right = Math.min(BAND_COUNT - 1, left + 1);
+            float fraction = position - left;
+            float center = fft[left] * (1f - fraction) + fft[right] * fraction;
+            // Neighbour smoothing reduces jagged high-frequency bins.
+            float prev = fft[Math.max(0, left - 1)];
+            float next = fft[Math.min(BAND_COUNT - 1, right + 1)];
+            return center * .75f + prev * .125f + next * .125f;
+        }
+
         void animateFrame(float[] fft, float rms, int mode) {
-            if (mode == AUDIO_FFT && fft != null) {
+            if (mode == AUDIO_FFT && fft != null && fft.length >= BAND_COUNT) {
+                float sourcePeak = 0f;
                 for (int i = 0; i < BAND_COUNT; i++) {
-                    float target = fft[i];
-                    smoothBands[i] += (target - smoothBands[i])
-                            * (target > smoothBands[i] ? .36f : .16f);
+                    if (fft[i] > sourcePeak) sourcePeak = fft[i];
                 }
-                phase += .028f;
+                // Slowly normalise recordings with different loudness; clamp to
+                // prevent breathing or sudden full-scale jumps.
+                float wantedGain = .82f / Math.max(.28f, sourcePeak);
+                wantedGain = Math.max(.78f, Math.min(2.15f, wantedGain));
+                autoGain += (wantedGain - autoGain) * .025f;
+                for (int i = 0; i < BARS; i++) {
+                    float pos = i * (BAND_COUNT - 1f) / (BARS - 1f);
+                    float raw = sampleBand(fft, pos);
+                    float scaled = clamp01((raw - .035f) * autoGain * sensitivity);
+                    // Gentle gamma makes medium-height bars easy to distinguish.
+                    float target = (float) Math.pow(scaled, .85f);
+                    updateBar(i, target);
+                }
             } else if (mode == AUDIO_WAVEFORM) {
-                smoothRms += (rms - smoothRms) * (rms > smoothRms ? .32f : .16f);
-                for (int i = 0; i < BAND_COUNT; i++) {
-                    smoothBands[i] += (smoothRms - smoothBands[i]) * .24f;
+                // A real volume envelope, not a fabricated spectrum.
+                for (int i = 0; i < BARS; i++) {
+                    float t = (i + .5f) / BARS;
+                    float centered = (float) Math.pow(Math.sin(Math.PI * t), .72);
+                    updateBar(i, clamp01(rms * sensitivity * 1.6f)
+                            * (.28f + .72f * centered));
                 }
-                phase += .024f;
             } else {
-                // No audio available: settle to a flat baseline; never fake music beats.
-                for (int i = 0; i < BAND_COUNT; i++) smoothBands[i] *= .85f;
-                smoothRms *= .85f;
+                for (int i = 0; i < BARS; i++) updateBar(i, 0f);
             }
             invalidate();
         }
 
+        private void updateBar(int i, float target) {
+            float current = levels[i];
+            // CAVA-like response: quick attack, slower release.
+            current += (target - current) * (target > current ? .42f : .115f);
+            if (current < .0015f) current = 0f;
+            levels[i] = current;
+            if (current >= peaks[i]) {
+                peaks[i] = current;
+                peakHold[i] = 5;
+            } else if (peakHold[i] > 0) {
+                peakHold[i]--;
+            } else {
+                // Gravity-driven peak markers, always at or above their bars.
+                peaks[i] = Math.max(current, peaks[i] - .014f);
+            }
+        }
+
         void setResting() {
-            for (int i = 0; i < BAND_COUNT; i++) smoothBands[i] = 0f;
-            smoothRms = 0f;
+            autoGain = 1f;
+            for (int i = 0; i < BARS; i++) {
+                levels[i] = 0f;
+                peaks[i] = 0f;
+                peakHold[i] = 0;
+            }
             invalidate();
+        }
+
+        private void ensureGradient(float top, float bottom) {
+            if (barGradient != null && gradientTop == top && gradientBottom == bottom)
+                return;
+            gradientTop = top;
+            gradientBottom = bottom;
+            int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
+            barGradient = new android.graphics.LinearGradient(0, top, 0, bottom,
+                    new int[]{Color.argb(178, r, g, b), Color.argb(125, r, g, b),
+                            Color.argb(88, r, g, b)},
+                    new float[]{0f, .62f, 1f}, Shader.TileMode.CLAMP);
         }
 
         @Override protected void onDraw(Canvas c) {
             float w = getWidth(), h = getHeight();
             if (w <= 0f || h <= 0f) return;
+
+            paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xDCF1F1F3);
+            paint.setColor(0xDCF1F1F3); // original Figma milky glass
             c.drawRect(0f, 0f, w, h, paint);
-            drawWave(c, w, h, h * .735f, h * .055f, phase, upperWaveColor, 0);
-            drawWave(c, w, h, h * .792f, h * .033f, -phase * .78f + 1.2f, lowerWaveColor, 6);
+
+            float leftMargin = d(18);
+            float slot = (w - 2f * leftMargin) / BARS;
+            float barWidth = Math.max(d(2.5f), slot * .60f);
+            float radius = Math.min(barWidth / 2f, d(4));
+            float floor = h * .918f;
+            float maxHeight = h * .205f;
+            float center = h * .812f;
+            float halfHeight = h * .102f;
+            float top = mirrored ? center - halfHeight : floor - maxHeight;
+            float bottom = mirrored ? center + halfHeight : floor;
+            ensureGradient(top, bottom);
+
+            paint.setShader(barGradient);
+            for (int i = 0; i < BARS; i++) {
+                float x1 = leftMargin + i * slot + (slot - barWidth) / 2f;
+                float x2 = x1 + barWidth;
+                float level = levels[i];
+                if (level <= .0015f) continue;
+                float y1, y2;
+                if (mirrored) {
+                    float rise = Math.max(d(1f), level * halfHeight);
+                    y1 = center - rise;
+                    y2 = center + rise;
+                } else {
+                    float rise = Math.max(d(2f), level * maxHeight);
+                    y1 = floor - rise;
+                    y2 = floor;
+                }
+                c.drawRoundRect(x1, y1, x2, y2, radius, radius, paint);
+            }
+            paint.setShader(null);
+
+            // Small, gently falling peak markers. These are driven by the same
+            // FFT values, not by a timer or pseudo-random animation.
+            paint.setColor(Color.argb(178, Color.red(color), Color.green(color),
+                    Color.blue(color)));
+            for (int i = 0; i < BARS; i++) {
+                if (peaks[i] < .09f) continue;
+                float x1 = leftMargin + i * slot + (slot - barWidth) / 2f;
+                float x2 = x1 + barWidth;
+                float tip = mirrored ? center - peaks[i] * halfHeight
+                        : floor - peaks[i] * maxHeight;
+                c.drawRoundRect(x1, tip - d(.8f), x2, tip + d(.8f),
+                        d(.8f), d(.8f), paint);
+            }
+
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
             paint.setColor(0xC6FFFFFF);
             c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
                     d(20), d(20), paint);
             paint.setStyle(Paint.Style.FILL);
-        }
-
-        private void drawWave(Canvas c, float w, float h, float baseline,
-                              float maxAmplitude, float phaseShift, int color, int offset) {
-            wave.reset();
-            wave.moveTo(0f, h);
-            wave.lineTo(0f, baseline);
-            for (int step = 1; step <= 90; step++) {
-                float t = step / 90f;
-                float pos = t * (BAND_COUNT - 1);
-                int index = Math.min(BAND_COUNT - 2, (int) pos);
-                float a = smoothBands[(index + offset) % BAND_COUNT];
-                float b = smoothBands[(index + 1 + offset) % BAND_COUNT];
-                float level = a + (b - a) * (pos - index);
-                float taper = (float) Math.pow(Math.sin(Math.PI * t), .65d);
-                float rise = maxAmplitude * level * taper;
-                float sway = (float) Math.sin(t * Math.PI * 3.8 + phaseShift);
-                float fine = (float) Math.sin(t * Math.PI * 8.0 - phaseShift * .65f);
-                wave.lineTo(w * t, baseline + rise * (.75f * sway + .25f * fine));
-            }
-            wave.lineTo(w, h);
-            wave.close();
-            paint.setColor(color);
-            c.drawPath(wave, paint);
         }
     }
 
