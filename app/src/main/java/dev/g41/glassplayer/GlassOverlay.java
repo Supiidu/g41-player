@@ -20,6 +20,7 @@ import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.BitmapDrawable;
 import android.media.AudioManager;
 import android.media.audiofx.Visualizer;
 import android.media.MediaMetadata;
@@ -54,7 +55,7 @@ import java.util.Locale;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * v0.5 — Figma Edition, layout fixes and audio-reactive waves.
+ * v0.6 — Figma Edition: FFT/waveform-driven waves + album-color accents.
  * Original wallpaper is visible through a TRANSPARENT fullscreen overlay;
  * the giant clock is temporarily hidden only if a narrowly identified
  * large-clock View can be found. Restores alpha on close.
@@ -65,7 +66,9 @@ public final class GlassOverlay {
     private static final int TYPE_STATUS_BAR_SUB_PANEL = 2017; // SystemUI-only type
     private static final int TEXT = 0xFF11131A;
     private static final int MUTED = 0xFF5E6678;
-    private static final int BLUE = 0xFF0857DB;
+    private static final int BLUE = 0xFF0857DB; // fallback if album art unavailable
+    private static final int BAND_COUNT = 24;
+    private static final int AUDIO_PENDING = 0, AUDIO_FFT = 1, AUDIO_WAVEFORM = 2, AUDIO_UNAVAILABLE = 3;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private static Context context;
@@ -86,8 +89,17 @@ public final class GlassOverlay {
     private static String lastArtworkKey;
     private static GlassSurface glassSurface;
     private static Visualizer visualizer;
-    private static volatile float audioEnergy = 0f;
-    private static volatile boolean fftDataPresent = false;
+    // Capture callbacks run off the UI thread. Publish immutable snapshots, never mutate them.
+    private static volatile float[] fftBands = new float[BAND_COUNT];
+    private static volatile float waveformEnergy = 0f;
+    private static volatile long lastFftSignalAt = 0L;
+    private static volatile long lastWaveSignalAt = 0L;
+    private static volatile int fftFrames = 0;
+    private static volatile int waveFrames = 0;
+    private static long captureStartedAt = 0L;
+    private static int audioMode = AUDIO_PENDING;
+    private static boolean audioStatsLogged = false;
+    private static int accentColor = BLUE;
     private static boolean isPlaying = false;
     private static final Map<View, Float> hiddenClockAlphas = new IdentityHashMap<>();
     private static int clockCandidateLogs = 0;
@@ -95,14 +107,40 @@ public final class GlassOverlay {
     private static final Runnable WAVE_TICK = new Runnable() {
         @Override public void run() {
             if (root == null || glassSurface == null) return;
-            if (isPlaying) {
-                glassSurface.animateFrame(audioEnergy, fftDataPresent);
-                MAIN.postDelayed(this, 33L); // ~30 FPS, no work when paused
-            } else {
+            if (!isPlaying) {
                 glassSurface.setResting();
+                return;
             }
+            long now = SystemClock.elapsedRealtime();
+            int selected = AUDIO_PENDING;
+            if (now - lastFftSignalAt < 1700L) selected = AUDIO_FFT;
+            else if (now - lastWaveSignalAt < 1700L) selected = AUDIO_WAVEFORM;
+            else if (now - captureStartedAt > 4000L) selected = AUDIO_UNAVAILABLE;
+
+            if (selected != audioMode) {
+                audioMode = selected;
+                Log.i(TAG, "Ondas: modo=" + audioModeName(selected)
+                        + " fftFrames=" + fftFrames + " waveFrames=" + waveFrames);
+            }
+            if (!audioStatsLogged && now - captureStartedAt > 6000L) {
+                audioStatsLogged = true;
+                Log.i(TAG, "Ondas: diagnostico apos 6s: FFT=" + fftFrames
+                        + " waveform=" + waveFrames + " modo=" + audioModeName(audioMode));
+            }
+            glassSurface.animateFrame(selected == AUDIO_FFT ? fftBands : null,
+                    selected == AUDIO_WAVEFORM ? waveformEnergy : 0f, selected);
+            MAIN.postDelayed(this, 33L); // ~30 FPS only while playing
         }
     };
+
+    private static String audioModeName(int mode) {
+        switch (mode) {
+            case AUDIO_FFT: return "REAL_FFT";
+            case AUDIO_WAVEFORM: return "REAL_WAVEFORM_RMS";
+            case AUDIO_UNAVAILABLE: return "SEM_CAPTURA_REPOUSO";
+            default: return "AGUARDANDO_DADOS";
+        }
+    }
 
     private GlassOverlay() {}
 
@@ -127,6 +165,7 @@ public final class GlassOverlay {
             if (wm == null) { reset(); return false; }
             findController();
             candidate = buildWindow(app, initialArt);
+            applyColorsFromDrawable(initialArt);
 
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -139,7 +178,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.5.2");
+            lp.setTitle("G41 Glass Player v0.6");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -153,7 +192,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.5.2 ABERTO (wallpaper real, card central, ondas vivas)");
+            Log.i(TAG, "GLASS V0.6 ABERTO (clock preservado no fechamento, ondas por audio, paleta da capa)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.5 falhou; mantendo player original", t);
@@ -181,7 +220,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.5.2 FECHADO: clock e lockscreen restaurados");
+        Log.i(TAG, "GLASS V0.6 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
@@ -200,8 +239,15 @@ public final class GlassOverlay {
         lastArtworkKey = null;
         glassSurface = null;
         isPlaying = false;
-        audioEnergy = 0f;
-        fftDataPresent = false;
+        fftBands = new float[BAND_COUNT];
+        waveformEnergy = 0f;
+        lastFftSignalAt = 0L;
+        lastWaveSignalAt = 0L;
+        fftFrames = waveFrames = 0;
+        captureStartedAt = 0L;
+        audioMode = AUDIO_PENDING;
+        audioStatsLogged = false;
+        accentColor = BLUE;
     }
 
     private static void registerReceiver() {
@@ -331,7 +377,7 @@ public final class GlassOverlay {
         // The full-screen backdrop, not the card, closes the expanded player.
         fullscreen.setOnClickListener(v -> hide());
         card.setOnClickListener(v -> {});
-        Log.i(TAG, "Layout v0.5: card=" + cardWidth + "x" + cardHeight
+        Log.i(TAG, "Layout v0.6: card=" + cardWidth + "x" + cardHeight
                 + "px, cover=" + albumSize + "px, centro=" + (sh/2));
         return fullscreen;
     }
@@ -425,42 +471,97 @@ public final class GlassOverlay {
         hiddenClockAlphas.clear();
     }
 
-    /** Audio spectrum capture via the system mix (session 0), if permitted. */
+    /**
+     * Visualizer on session 0 observes the output mix when Android permits it.
+     * Initializing the effect is NOT proof that any usable audio was captured.
+     * FFT bins (frequency) and waveform RMS (volume) are handled separately.
+     */
     private static void startAudioCapture() {
         stopAudioCapture();
-        fftDataPresent = false;
-        audioEnergy = 0f;
+        fftBands = new float[BAND_COUNT];
+        waveformEnergy = 0f;
+        lastFftSignalAt = lastWaveSignalAt = 0L;
+        fftFrames = waveFrames = 0;
+        captureStartedAt = SystemClock.elapsedRealtime();
+        audioMode = AUDIO_PENDING;
+        audioStatsLogged = false;
         try {
+            if (context != null) {
+                boolean record = context.checkSelfPermission("android.permission.RECORD_AUDIO")
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                boolean modify = context.checkSelfPermission("android.permission.MODIFY_AUDIO_SETTINGS")
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                Log.i(TAG, "Ondas: permissoes do processo SystemUI: RECORD_AUDIO=" + record
+                        + " MODIFY_AUDIO_SETTINGS=" + modify);
+            }
             Visualizer v = new Visualizer(0);
-            visualizer = v; // assegura release() mesmo se a configuracao falhar
+            visualizer = v;
             int[] range = Visualizer.getCaptureSizeRange();
-            v.setCaptureSize(Math.min(range[1], Math.max(range[0], 256)));
-            v.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
-                @Override public void onWaveFormDataCapture(Visualizer vis, byte[] bytes, int rate) { }
-                @Override public void onFftDataCapture(Visualizer vis, byte[] fft, int rate) {
-                    if (root == null || fft == null || fft.length < 24) return;
-                    double sum = 0;
-                    int count=0;
-                    // Lower frequencies drive the waves most visibly.
-                    for (int i=2; i+1<Math.min(fft.length, 90); i+=2) {
-                        int re=fft[i], im=fft[i+1];
-                        double magnitude=Math.hypot(re,im);
-                        sum += magnitude * (i < 28 ? 1.7 : .65);
+            int captureSize = Math.min(range[1], Math.max(range[0], 1024));
+            v.setCaptureSize(captureSize);
+            int result = v.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
+                @Override public void onWaveFormDataCapture(Visualizer vis, byte[] bytes, int rate) {
+                    if (root == null || bytes == null || bytes.length == 0) return;
+                    waveFrames++;
+                    double sum = 0d;
+                    int count = 0;
+                    for (int i = 0; i < bytes.length; i += 4) {
+                        float sample = ((bytes[i] & 255) - 128f) / 128f;
+                        sum += sample * sample;
                         count++;
                     }
-                    float e=(float)Math.max(0,Math.min(1,(sum/Math.max(1,count)-3)/45));
-                    audioEnergy=e;
-                    if (!fftDataPresent && e > .035f) {
-                        fftDataPresent=true;
-                        Log.i(TAG,"Ondas: FFT real recebido do audio do sistema");
+                    float rms = (float) Math.sqrt(sum / Math.max(1, count));
+                    float level = clamp01((rms - .012f) * 3.8f);
+                    waveformEnergy = level;
+                    if (level > .02f) lastWaveSignalAt = SystemClock.elapsedRealtime();
+                }
+
+                @Override public void onFftDataCapture(Visualizer vis, byte[] fft, int rate) {
+                    if (root == null || fft == null || fft.length < 64) return;
+                    fftFrames++;
+                    // Android reports 'rate' in milliHz. Each FFT bin is a real frequency.
+                    double samplingHz = rate / 1000.0;
+                    if (samplingHz < 8000d) samplingHz = 44100d;
+                    int n = fft.length;
+                    double[] sum = new double[BAND_COUNT];
+                    int[] counts = new int[BAND_COUNT];
+                    double totalSignal = 0d;
+                    float strongestBand = 0f;
+                    for (int k = 1; k < n / 2; k++) {
+                        double hz = k * samplingHz / n;
+                        if (hz < 45d || hz > 12000d) continue;
+                        int band = (int) (Math.log(hz / 45d) / Math.log(12000d / 45d)
+                                * BAND_COUNT);
+                        band = Math.max(0, Math.min(BAND_COUNT - 1, band));
+                        double mag = Math.hypot((double) fft[k * 2], (double) fft[k * 2 + 1]);
+                        sum[band] += mag;
+                        counts[band]++;
+                    }
+                    float[] bands = new float[BAND_COUNT];
+                    for (int i = 0; i < BAND_COUNT; i++) {
+                        float mag = (float) (sum[i] / Math.max(1, counts[i]));
+                        // Noise gate + logarithmic magnitude mapping for quiet and loud tracks.
+                        float level = clamp01((float) ((Math.log1p(mag) - Math.log(3.5d)) / 2.9d));
+                        bands[i] = level;
+                        totalSignal += level;
+                        if (level > strongestBand) strongestBand = level;
+                    }
+                    fftBands = bands; // atomic snapshot for the UI thread
+                    // A sparse bass-only spectrum can still be real audio.
+                    if (totalSignal / BAND_COUNT > .022d || strongestBand > .085f) {
+                        lastFftSignalAt = SystemClock.elapsedRealtime();
                     }
                 }
-            }, Math.min(20000,Visualizer.getMaxCaptureRate()), false, true);
+            }, Math.min(20000, Visualizer.getMaxCaptureRate()), true, true);
+            if (result != Visualizer.SUCCESS) {
+                throw new IllegalStateException("setDataCaptureListener status=" + result);
+            }
             v.setEnabled(true);
-            visualizer = v;
-            Log.i(TAG,"Ondas: captura de audio inicializada (Visualizer session=0)");
+            Log.i(TAG, "Ondas: Visualizer session=0 habilitado, captureSize=" + captureSize
+                    + " rate=" + Math.min(20000, Visualizer.getMaxCaptureRate())
+                    + " (aguardando callbacks reais)");
         } catch (Throwable t) {
-            Log.w(TAG,"Ondas: audio real indisponivel; animando pelo estado play/pause",t);
+            Log.w(TAG, "Ondas: Visualizer indisponivel; ondas permanecem em repouso", t);
             stopAudioCapture();
         }
     }
@@ -470,60 +571,185 @@ public final class GlassOverlay {
             try { visualizer.setEnabled(false); } catch (Throwable ignored) { }
             try { visualizer.release(); } catch (Throwable ignored) { }
         }
-        visualizer=null;
+        visualizer = null;
     }
 
-    /** Two independent animated translucent waves reacting to FFT amplitude. */
+    private static float clamp01(float v) {
+        return Math.max(0f, Math.min(1f, v));
+    }
+
+    /** Only album colors change; the milky Figma card and dark labels remain fixed. */
+    private static void applyAccent(int color) {
+        if (color == accentColor) return;
+        accentColor = color;
+        if (glassSurface != null) glassSurface.setAccent(color);
+        if (progressView != null) progressView.setAccent(color);
+        Log.i(TAG, String.format(Locale.ROOT, "Paleta: album accent=#%06X", color & 0xFFFFFF));
+    }
+
+    private static void applyColorsFromDrawable(Drawable art) {
+        if (art == null) { applyAccent(BLUE); return; }
+        try {
+            Bitmap bitmap;
+            if (art instanceof BitmapDrawable) {
+                bitmap = ((BitmapDrawable) art).getBitmap();
+            } else {
+                // Render only a tiny copy. Do not mutate the original IslandEvent artwork.
+                bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(bitmap);
+                Drawable clone = art.getConstantState() == null ? null
+                        : art.getConstantState().newDrawable().mutate();
+                if (clone == null) { applyAccent(BLUE); return; }
+                clone.setBounds(0, 0, 64, 64);
+                clone.draw(canvas);
+            }
+            applyAccent(extractAccent(bitmap));
+        } catch (Throwable t) {
+            Log.w(TAG, "Paleta: erro ao ler Drawable, usando azul padrao", t);
+            applyAccent(BLUE);
+        }
+    }
+
+    /**
+     * Lightweight palette extraction without androidx dependencies: sample 14x14,
+     * accumulate sufficiently saturated pixels by hue, then clamp saturation/value
+     * for legibility on the white glass background.
+     */
+    private static int extractAccent(Bitmap artwork) {
+        if (artwork == null || artwork.isRecycled()) return BLUE;
+        Bitmap sampled = null;
+        try {
+            // Canvas resampling also supports hardware-backed source bitmaps.
+            sampled = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888);
+            Canvas c = new Canvas(sampled);
+            Paint filter = new Paint(Paint.FILTER_BITMAP_FLAG);
+            c.drawBitmap(artwork, null, new android.graphics.Rect(0, 0, 48, 48), filter);
+            final int GROUPS = 24;
+            double[] weight = new double[GROUPS];
+            double[] hSin = new double[GROUPS];
+            double[] hCos = new double[GROUPS];
+            double[] sat = new double[GROUPS];
+            double[] val = new double[GROUPS];
+            float[] hsv = new float[3];
+            for (int y = 3; y < 45; y += 3) {
+                for (int x = 3; x < 45; x += 3) {
+                    int color = sampled.getPixel(x, y);
+                    if (Color.alpha(color) < 180) continue;
+                    Color.colorToHSV(color, hsv);
+                    if (hsv[1] < .17f || hsv[2] < .18f || hsv[2] > .97f && hsv[1] < .3f)
+                        continue;
+                    int group = Math.min(GROUPS - 1, (int) (hsv[0] / 360f * GROUPS));
+                    double score = Math.pow(hsv[1], 1.15) * (0.75 + 0.25 * hsv[2]);
+                    weight[group] += score;
+                    double rad = Math.toRadians(hsv[0]);
+                    hSin[group] += Math.sin(rad) * score;
+                    hCos[group] += Math.cos(rad) * score;
+                    sat[group] += hsv[1] * score;
+                    val[group] += hsv[2] * score;
+                }
+            }
+            int best = -1;
+            for (int i = 0; i < GROUPS; i++) {
+                if (weight[i] > 0.01 && (best == -1 || weight[i] > weight[best])) best = i;
+            }
+            if (best == -1) return 0xFF61718B; // grayscale covers
+            float hue = (float) ((Math.toDegrees(Math.atan2(hSin[best], hCos[best])) + 360d) % 360d);
+            float saturation = Math.max(.48f, Math.min(.84f, (float) (sat[best] / weight[best]) * .95f));
+            float brightness = Math.max(.48f, Math.min(.73f, (float) (val[best] / weight[best]) * .88f));
+            return Color.HSVToColor(new float[]{hue, saturation, brightness});
+        } finally {
+            if (sampled != null) sampled.recycle();
+        }
+    }
+
+    /** Two audio-reactive waves with no procedurally invented beat when capture fails. */
     private static final class GlassSurface extends View {
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Path wave = new Path();
-        float phase=0f;
-        float smooth=0f;
-        GlassSurface(Context c) { super(c); setLayerType(View.LAYER_TYPE_HARDWARE,null); }
-        void animateFrame(float energy, boolean hasFft) {
-            // While playing, flow continuously; when FFT is present, beat energy
-            // also changes height and speed. Without FFT, gentle motion only.
-            float target=hasFft ? energy : .22f;
-            smooth += (target-smooth)*.20f;
-            phase += .045f + smooth*.038f;
+        final float[] smoothBands = new float[BAND_COUNT];
+        float phase = 0f;
+        float smoothRms = 0f;
+        int upperWaveColor = 0x9497B1D7;
+        int lowerWaveColor = 0x6094ACD1;
+
+        GlassSurface(Context c) {
+            super(c);
+            setLayerType(View.LAYER_TYPE_HARDWARE, null);
+            setAccent(accentColor);
+        }
+
+        void setAccent(int color) {
+            upperWaveColor = Color.argb(135, Color.red(color), Color.green(color), Color.blue(color));
+            lowerWaveColor = Color.argb(75, Color.red(color), Color.green(color), Color.blue(color));
             invalidate();
         }
-        void setResting() { smooth=0f; invalidate(); }
+
+        void animateFrame(float[] fft, float rms, int mode) {
+            if (mode == AUDIO_FFT && fft != null) {
+                for (int i = 0; i < BAND_COUNT; i++) {
+                    float target = fft[i];
+                    smoothBands[i] += (target - smoothBands[i])
+                            * (target > smoothBands[i] ? .36f : .16f);
+                }
+                phase += .028f;
+            } else if (mode == AUDIO_WAVEFORM) {
+                smoothRms += (rms - smoothRms) * (rms > smoothRms ? .32f : .16f);
+                for (int i = 0; i < BAND_COUNT; i++) {
+                    smoothBands[i] += (smoothRms - smoothBands[i]) * .24f;
+                }
+                phase += .024f;
+            } else {
+                // No audio available: settle to a flat baseline; never fake music beats.
+                for (int i = 0; i < BAND_COUNT; i++) smoothBands[i] *= .85f;
+                smoothRms *= .85f;
+            }
+            invalidate();
+        }
+
+        void setResting() {
+            for (int i = 0; i < BAND_COUNT; i++) smoothBands[i] = 0f;
+            smoothRms = 0f;
+            invalidate();
+        }
+
         @Override protected void onDraw(Canvas c) {
-            float w=getWidth(), h=getHeight();
-            if (w<=0 || h<=0) return;
+            float w = getWidth(), h = getHeight();
+            if (w <= 0f || h <= 0f) return;
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xDCF1F1F3); // milky glass; genuine wallpaper visible underneath
-            c.drawRect(0,0,w,h,paint);
-
-            drawWave(c,w,h,h*.735f,h*.040f + h*.048f*smooth,phase,0x9397B1D7);
-            drawWave(c,w,h,h*.792f,h*.017f + h*.025f*smooth,-phase*.72f+1.2f,0x5594ACD1);
-
+            paint.setColor(0xDCF1F1F3);
+            c.drawRect(0f, 0f, w, h, paint);
+            drawWave(c, w, h, h * .735f, h * .055f, phase, upperWaveColor, 0);
+            drawWave(c, w, h, h * .792f, h * .033f, -phase * .78f + 1.2f, lowerWaveColor, 6);
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
             paint.setColor(0xC6FFFFFF);
-            RectF frame=new RectF(d(.5f),d(.5f),w-d(.5f),h-d(.5f));
-            c.drawRoundRect(frame,d(20),d(20),paint);
+            c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
+                    d(20), d(20), paint);
             paint.setStyle(Paint.Style.FILL);
         }
-        private void drawWave(Canvas c,float w,float h,float base,float amplitude,
-                              float p,int color) {
+
+        private void drawWave(Canvas c, float w, float h, float baseline,
+                              float maxAmplitude, float phaseShift, int color, int offset) {
             wave.reset();
-            wave.moveTo(0,h);
-            wave.lineTo(0,base);
-            int steps=72;
-            for (int i=1;i<=steps;i++) {
-                float x=w*i/steps;
-                float t=x/w;
-                float y=base + amplitude*(float)(
-                    Math.sin(t*Math.PI*4.0 + p)*.67 +
-                    Math.sin(t*Math.PI*7.1 - p*.72)*.33);
-                wave.lineTo(x,y);
+            wave.moveTo(0f, h);
+            wave.lineTo(0f, baseline);
+            for (int step = 1; step <= 90; step++) {
+                float t = step / 90f;
+                float pos = t * (BAND_COUNT - 1);
+                int index = Math.min(BAND_COUNT - 2, (int) pos);
+                float a = smoothBands[(index + offset) % BAND_COUNT];
+                float b = smoothBands[(index + 1 + offset) % BAND_COUNT];
+                float level = a + (b - a) * (pos - index);
+                float taper = (float) Math.pow(Math.sin(Math.PI * t), .65d);
+                float rise = maxAmplitude * level * taper;
+                float sway = (float) Math.sin(t * Math.PI * 3.8 + phaseShift);
+                float fine = (float) Math.sin(t * Math.PI * 8.0 - phaseShift * .65f);
+                wave.lineTo(w * t, baseline + rise * (.75f * sway + .25f * fine));
             }
-            wave.lineTo(w,h);
+            wave.lineTo(w, h);
             wave.close();
             paint.setColor(color);
-            c.drawPath(wave,paint);
+            c.drawPath(wave, paint);
         }
     }
 
@@ -581,7 +807,9 @@ public final class GlassOverlay {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float fraction=0;
         private boolean available=false;
+        private int color = accentColor;
         ProgressLine(Context c) { super(c); setClickable(true); }
+        void setAccent(int next) { color = next; invalidate(); }
         void update(float f, boolean enabled) {
             if (!seeking) fraction=Math.max(0,Math.min(1,f));
             available=enabled;
@@ -595,7 +823,7 @@ public final class GlassOverlay {
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setColor(0xFFE7E9ED);
             c.drawLine(start,centerY,end,centerY,p);
-            p.setColor(BLUE);
+            p.setColor(color);
             c.drawLine(start,centerY,start+(end-start)*fraction,centerY,p);
         }
         @Override public boolean onTouchEvent(MotionEvent e) {
@@ -693,7 +921,15 @@ public final class GlassOverlay {
                     lastArtworkKey=key;
                     Bitmap art=m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
                     if (art==null) art=m.getBitmap(MediaMetadata.METADATA_KEY_ART);
-                    if (art!=null) artView.setImageBitmap(art);
+                    if (art==null) art=m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
+                    if (art!=null) {
+                        artView.setImageBitmap(art);
+                        try { applyAccent(extractAccent(art)); }
+                        catch (Throwable t) { Log.w(TAG, "Paleta: nao foi possivel ler album", t); }
+                    } else {
+                        // An Event Drawable may still contain the visible cover.
+                        applyColorsFromDrawable(artView.getDrawable());
+                    }
                 }
                 durationMs=m.getLong(MediaMetadata.METADATA_KEY_DURATION);
             }
