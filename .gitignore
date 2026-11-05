@@ -4,3 +4,14 @@
 /app/build/
 /app/libs/api-82.jar
 /local.properties
+/.idea/
+*.iml
+*.apk
+*.aab
+*.jks
+*.keystore
+*.key
+.env
+.env.*
+.DS_Store
+/backups/

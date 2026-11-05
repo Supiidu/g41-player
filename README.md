@@ -1,49 +1,66 @@
-# G41 Glass Player - etapa 0: diagnostico
+# G41 Glass Player
 
-Este e um projeto **Xposed legacy (API 82)** que usa o classloader do SystemUI para
-observar dois metodos identificados no `SystemUI-original.apk` da Infinity X 3.12:
+**Experimental Android media UI for the Moto G41 · Java · Android · SystemUI hooks**
 
-* `AxDynamicBarKeyguardExpansion.expand()`
-* `KeyguardExpandedContentKt.KeyguardMediaPanel(IslandEvent.Media, IslandActions, Composer, int)`
+G41 Glass Player is a personal project to turn a Motorola Moto G41 into a dedicated music player (DAP) with a custom lockscreen media panel. It works as a **legacy Xposed API 82 module**, scoped to `com.android.systemui` via the Vector framework on an **Infinity X Android 16** test environment. This is an experimental ROM-specific integration, **not** a standalone Spotify or ML-based audio player.
 
-O modulo **nao** altera retorno, argumentos, UI, arquivos do sistema, overlays ou Magisk.
+## Features (v0.8.1 Fluid Wave)
 
-## Build em Arch Linux
+- Custom expanded media card with artwork, metadata, progress line, and playback controls.
+- Media-session integration with a fallback to standard media key events.
+- **Real-time audio visualization:** FFT / waveform data through Android `Visualizer`, interpolated into continuous, filled wave shapes with `Canvas` and `Path`.
+- Dynamic color accents derived from album artwork when available.
+- Lockscreen clock handling and experimental InfinityBar compact-visibility control.
+- Safety toggle via `Settings.Global` to fall back to the original ROM panel.
 
-Requisitos: Android SDK API 36 em ANDROID_HOME, JDK 17, Gradle de sistema,
-`curl` e `unzip`. O script configura o wrapper Gradle 8.13 e baixa um jar de API
-Xposed 82 somente para compilacao (`compileOnly`).
+## Compatibility and risks
+
+> **Experimental, rooted Android setup required.** Hooks depend on ROM internals and can stop working after a SystemUI update. Installing or enabling an incompatible module can cause SystemUI crashes or a bootloop. Keep ADB, a backup, and a tested recovery path available.
+
+**Original target:** Motorola Moto G41, custom Infinity X 3.12 ROM (Android 16), Magisk/Zygisk and Vector with scope restricted to `com.android.systemui`. It is not verified on stock Motorola Android or other ROMs.
+
+## Build on Linux
+
+Requirements: Android SDK Platform 36 (`ANDROID_HOME`), Java 17 (`JAVA_HOME`), locally installed Gradle, `curl`, and `unzip`.
 
 ```bash
-cd G41GlassPlayer
 export ANDROID_HOME=/opt/android-sdk
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
 bash setup.sh
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`
+The original `setup.sh` fetches the Xposed API 82 `compileOnly` JAR and generates a Gradle 8.13 wrapper with the system Gradle on first use. The generated JAR, wrapper outputs, and APKs are not committed. Result, when the build succeeds: `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Uso com Vector
+**Build status:** Source patches were reconstructed and checked for successful application; a real Android SDK compilation and on-device test have **not** been run as part of this import. Historical patch scripts can be found under [`docs/history/scripts/`](docs/history/scripts/), but their original patch Java files are represented by the Git commit history, not stored next to the scripts.
 
-1. Confirme Magisk + Zygisk, inicializacao normal do Vector e plano de recuperacao.
-2. Instale com `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
-3. No Vector Manager, ative o modulo e marque SOMENTE `com.android.systemui` como escopo.
-4. Reinicie o Android para reiniciar o SystemUI e carregar o hook.
-5. `adb logcat -c` e `adb logcat -v time -s G41GlassPlayer:I '*:S'`.
-6. Trave a tela e toque na InfinityBar quando houver musica.
+## Install and disable
 
-Esperado: `Modulo carregado`, `Hooks ... instalados: 1`,
-`expand() chamado`, `KeyguardMediaPanel executado`.
-O nome de classe e assinatura dependem da versao de SystemUI descompilada.
+Review the [original version notes](docs/history/) before changing a live phone. With a compatible rooted test device and Vector configured for **SystemUI only**:
 
-## Recuperacao
+```bash
+adb shell settings put global g41_glass_player_enabled 0
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb reboot
+adb shell settings put global g41_glass_player_enabled 1
+adb logcat -v time -s G41GlassPlayer:V '*:S'
+```
 
-* Se o sistema iniciar: desative o modulo no Vector, reinicie e remova o APK
-  (`adb uninstall dev.g41.glassplayer`).
-* Se SystemUI falhar mas ADB continuar: `adb uninstall dev.g41.glassplayer` e reinicie;
-  se o framework tiver carregado a classe no processo antigo, so reiniciar resolve.
-* Se houver bootloop: Magisk Safe Mode desativa TODOS os modulos Magisk,
-  inclusive os de audio/botao do seu G41, ate reabilitacao individual.
-  Nao use `magisk --remove-modules` sem entender que remove todos eles.
+Disable without uninstalling:
 
-Fonte: https://github.com/JingMatrix/Vector/blob/master/legacy/README.md
+```bash
+adb shell settings put global g41_glass_player_enabled 0
+```
+
+If SystemUI becomes unstable, disable the module in Vector. The original notes also discuss disabling the Vector Magisk module using root/ADB in a recovery scenario; do not use that method without understanding its impact on other hooks.
+
+## Version history
+
+The repository was **reconstructed from provided snapshots**, not recovered from the original chronological `.git` metadata. The imported commits are ordered by version and dated when published; they are not claimed to be original commit timestamps. See [CHANGELOG.md](CHANGELOG.md) and [reconstruction notes](docs/RECONSTRUCTION.md).
+
+## Asset note
+
+An illustration used as `g41_lockscreen.jpg` in the v0.4/v0.5 patch archives is **not redistributed** because its license/ownership was not established. Those versions attempt to fall back to the device wallpaper when the bundled illustration is absent. The v0.8.1 interface uses the actual lockscreen wallpaper instead.
+
+## License
+
+No open-source license has been assigned yet. Please ask before reusing or redistributing this code; any externally sourced assets retain their own terms.
