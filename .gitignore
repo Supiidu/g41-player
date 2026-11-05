@@ -1,0 +1,6 @@
+/.gradle/
+/.wrapper-bootstrap/
+/build/
+/app/build/
+/app/libs/api-82.jar
+/local.properties
