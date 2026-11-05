@@ -90,6 +90,7 @@ public final class GlassOverlay {
     private static volatile boolean fftDataPresent = false;
     private static boolean isPlaying = false;
     private static final Map<View, Float> hiddenClockAlphas = new IdentityHashMap<>();
+    private static int clockCandidateLogs = 0;
 
     private static final Runnable WAVE_TICK = new Runnable() {
         @Override public void run() {
@@ -138,7 +139,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.5");
+            lp.setTitle("G41 Glass Player v0.5.1");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -152,7 +153,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.5 ABERTO (wallpaper real, card central, ondas vivas)");
+            Log.i(TAG, "GLASS V0.5.1 ABERTO (wallpaper real, card central, ondas vivas)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.5 falhou; mantendo player original", t);
@@ -180,7 +181,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.5 FECHADO: clock e lockscreen restaurados");
+        Log.i(TAG, "GLASS V0.5.1 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
@@ -345,11 +346,19 @@ public final class GlassOverlay {
         try {
             Class<?> cls = Class.forName("android.view.WindowManagerGlobal");
             Object global = XposedHelpers.callStaticMethod(cls, "getInstance");
-            Object views = XposedHelpers.callMethod(global, "getRootViews");
+            // Android 16: getRootViews() exige um IBinder; para iterar janelas use getWindowViews().
+            Object views;
+            try {
+                views = XposedHelpers.callMethod(global, "getWindowViews");
+            } catch (Throwable apiMismatch) {
+                // Campo interno AOSP. Somente leitura; nao altera a lista de janelas.
+                views = XposedHelpers.getObjectField(global, "mViews");
+            }
             if (!(views instanceof List)) {
-                Log.w(TAG,"Clock: getRootViews nao retornou lista");
+                Log.w(TAG,"Clock: consulta de janelas nao retornou lista");
                 return;
             }
+            Log.i(TAG, "Clock: janelas visiveis ao SystemUI=" + ((List<?>)views).size());
             int before = hiddenClockAlphas.size();
             for (Object candidate : (List<?>)views) {
                 if (candidate instanceof View && candidate != root) {
@@ -379,10 +388,19 @@ public final class GlassOverlay {
         if (large && (cls.endsWith("animatableclockview")
                 || cls.endsWith("largeclockview")
                 || cls.endsWith("clocklayout")
+                || idName.equals("large_clock_frame")
+                || idName.equals("keyguard_large_clock")
                 || idName.equals("large_clock")
                 || idName.equals("lockscreen_clock_view_large")
                 || idName.equals("keyguard_clock_large"))) {
             candidate = true;
+        }
+        if ((idName.contains("clock") || cls.contains("clock")) && large
+                && clockCandidateLogs < 28) {
+            clockCandidateLogs++;
+            Log.i(TAG, "Clock: visto " + name + " id=" + idName
+                    + " size=" + v.getWidth() + "x" + v.getHeight()
+                    + " selecionado=" + candidate);
         }
         if (candidate) {
             if (!hiddenClockAlphas.containsKey(v)) {
