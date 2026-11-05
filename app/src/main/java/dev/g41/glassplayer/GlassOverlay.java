@@ -183,6 +183,7 @@ public final class GlassOverlay {
 
             root = candidate;
             hideLargeClockViews(); // leaves original wallpaper and depth effect intact
+            CompactBarVisibility.hide(app, candidate); // v0.8: conservative chip hide
             startAudioCapture();
             registerReceiver();
             refresh();
@@ -192,7 +193,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.7 ABERTO (clock restauravel, CAVA FFT, paleta da capa)");
+            Log.i(TAG, "GLASS V0.8 ABERTO (clock restauravel, CAVA FFT, paleta da capa)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
@@ -202,6 +203,7 @@ public final class GlassOverlay {
             unregisterReceiver();
             stopAudioCapture();
             restoreClockViews();
+            CompactBarVisibility.restore();
             reset();
             return false;
         }
@@ -212,6 +214,7 @@ public final class GlassOverlay {
         MAIN.removeCallbacks(WAVE_TICK);
         stopAudioCapture();
         restoreClockViews();
+        CompactBarVisibility.restore();
         unregisterReceiver();
         FrameLayout old = root;
         WindowManager oldWm = wm;
@@ -220,7 +223,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.7 FECHADO: clock e lockscreen restaurados");
+        Log.i(TAG, "GLASS V0.8 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
