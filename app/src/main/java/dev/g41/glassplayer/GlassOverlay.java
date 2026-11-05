@@ -21,6 +21,7 @@ import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.media.AudioManager;
+import android.media.audiofx.Visualizer;
 import android.media.MediaMetadata;
 import android.media.session.MediaController;
 import android.media.session.MediaSessionManager;
@@ -44,18 +45,20 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * v0.4 — Figma Edition.
- * Reuses the proven SystemUI expansion hook and creates a full-screen native
- * overlay. The original keyguard / clock are NOT modified: an opaque copy
- * of the user's supplied wallpaper visually hides the clock until dismissal.
- * The compact InfinityBar belongs to the ROM and stays untouched in v0.4.
+ * v0.5 — Figma Edition, layout fixes and audio-reactive waves.
+ * Original wallpaper is visible through a TRANSPARENT fullscreen overlay;
+ * the giant clock is temporarily hidden only if a narrowly identified
+ * large-clock View can be found. Restores alpha on close.
+ * The compact InfinityBar remains the ROM's original implementation.
  */
 public final class GlassOverlay {
     private static final String TAG = G41Hook.TAG;
@@ -81,7 +84,24 @@ public final class GlassOverlay {
     private static String initialTitle = "";
     private static String initialArtist = "";
     private static String lastArtworkKey;
-    private static Bitmap wallpaper;
+    private static GlassSurface glassSurface;
+    private static Visualizer visualizer;
+    private static volatile float audioEnergy = 0f;
+    private static volatile boolean fftDataPresent = false;
+    private static boolean isPlaying = false;
+    private static final Map<View, Float> hiddenClockAlphas = new IdentityHashMap<>();
+
+    private static final Runnable WAVE_TICK = new Runnable() {
+        @Override public void run() {
+            if (root == null || glassSurface == null) return;
+            if (isPlaying) {
+                glassSurface.animateFrame(audioEnergy, fftDataPresent);
+                MAIN.postDelayed(this, 33L); // ~30 FPS, no work when paused
+            } else {
+                glassSurface.setResting();
+            }
+        }
+    };
 
     private GlassOverlay() {}
 
@@ -104,9 +124,8 @@ public final class GlassOverlay {
 
             wm = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
             if (wm == null) { reset(); return false; }
-            wallpaper = loadWallpaper(app);
             findController();
-            candidate = buildWindow(app, initialArt, wallpaper);
+            candidate = buildWindow(app, initialArt);
 
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -119,24 +138,30 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.4");
+            lp.setTitle("G41 Glass Player v0.5");
             wm.addView(candidate, lp);
 
             root = candidate;
+            hideLargeClockViews(); // leaves original wallpaper and depth effect intact
+            startAudioCapture();
             registerReceiver();
             refresh();
+            MAIN.removeCallbacks(WAVE_TICK);
+            MAIN.post(WAVE_TICK);
             MAIN.removeCallbacks(TICK);
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.4 ABERTO (Figma, wallpaper, capa dinamica)");
+            Log.i(TAG, "GLASS V0.5 ABERTO (wallpaper real, card central, ondas vivas)");
             return true;
         } catch (Throwable t) {
-            Log.e(TAG, "Overlay v0.4 falhou; mantendo player original", t);
+            Log.e(TAG, "Overlay v0.5 falhou; mantendo player original", t);
             if (candidate != null && wm != null) {
                 try { wm.removeViewImmediate(candidate); } catch (Throwable ignored) { }
             }
             unregisterReceiver();
+            stopAudioCapture();
+            restoreClockViews();
             reset();
             return false;
         }
@@ -144,6 +169,9 @@ public final class GlassOverlay {
 
     public static void hide() {
         MAIN.removeCallbacks(TICK);
+        MAIN.removeCallbacks(WAVE_TICK);
+        stopAudioCapture();
+        restoreClockViews();
         unregisterReceiver();
         FrameLayout old = root;
         WindowManager oldWm = wm;
@@ -152,7 +180,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.4 FECHADO: lockscreen original restaurada");
+        Log.i(TAG, "GLASS V0.5 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
@@ -169,7 +197,10 @@ public final class GlassOverlay {
         durationMs = 0L;
         lastSessionCheck = 0L;
         lastArtworkKey = null;
-        wallpaper = null;
+        glassSurface = null;
+        isPlaying = false;
+        audioEnergy = 0f;
+        fftDataPresent = false;
     }
 
     private static void registerReceiver() {
@@ -192,41 +223,20 @@ public final class GlassOverlay {
         receiver = null;
     }
 
-    private static FrameLayout buildWindow(Context app, Drawable album, Bitmap bg) {
+    private static FrameLayout buildWindow(Context app, Drawable album) {
         DisplayMetrics m = new DisplayMetrics();
         wm.getDefaultDisplay().getRealMetrics(m);
-        int sw = m.widthPixels;
-        int sh = m.heightPixels;
+        final int sw = m.widthPixels;
+        final int sh = m.heightPixels;
         FrameLayout fullscreen = new FrameLayout(app);
+        fullscreen.setBackgroundColor(Color.TRANSPARENT); // wallpaper real, nao uma copia
         fullscreen.setClipChildren(false);
-        fullscreen.setContentDescription("G41 Glass Player aberto. Toque fora do card para fechar.");
-
-        if (bg != null) {
-            ImageView background = new ImageView(app);
-            background.setImageBitmap(bg);
-            background.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            fullscreen.addView(background, new FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT));
-            // This photo covers the native giant clock only while expanded.
-            fullscreen.setBackgroundColor(0xFF101219);
-        } else {
-            // If the stored wallpaper is unavailable, never black out the keyguard.
-            // Clock can remain visible in fallback mode.
-            fullscreen.setBackgroundColor(0xB9000000);
-            Log.w(TAG, "Wallpaper indisponivel; relogio pode continuar visivel");
-        }
-        View dim = new View(app);
-        dim.setBackgroundColor(bg != null ? 0x57060B11 : 0x16000000);
-        fullscreen.addView(dim, new FrameLayout.LayoutParams(-1, -1));
+        fullscreen.setContentDescription("G41 Glass Player. Toque fora do painel para fechar.");
 
         int cardWidth = Math.min(Math.round(sw * .895f), d(400));
         int albumSize = Math.round(cardWidth * .73f);
-        int cardHeight = albumSize + d(129);
-        int cardLeft = (sw - cardWidth) / 2;
-        int cardTop = Math.min(Math.round(sh * .36f), sh - cardHeight - d(35));
-        cardTop = Math.max(d(35), cardTop);
-
+        int cardHeight = albumSize + d(141);
+        // Center the WHOLE card, not just its cover.
         FrameLayout card = new FrameLayout(app);
         card.setElevation(d(12));
         card.setClipToOutline(true);
@@ -237,23 +247,13 @@ public final class GlassOverlay {
             }
         });
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(cardWidth, cardHeight);
-        cardLp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        cardLp.topMargin = cardTop;
+        cardLp.gravity = Gravity.CENTER;
         fullscreen.addView(card, cardLp);
 
-        // Real blur of the user's lockscreen photo inside the glass card (Android 12+).
-        if (bg != null) {
-            WallpaperInsideCard blur = new WallpaperInsideCard(app, bg, sw, sh,
-                    cardLeft, cardTop);
-            if (Build.VERSION.SDK_INT >= 31) {
-                blur.setRenderEffect(RenderEffect.createBlurEffect(
-                        d(14), d(14), Shader.TileMode.CLAMP));
-            }
-            card.addView(blur, new FrameLayout.LayoutParams(-1, -1));
-        }
-        // The glass/milky coating and waves are drawn behind content, not baked into art.
-        GlassSurface surface = new GlassSurface(app);
-        card.addView(surface, new FrameLayout.LayoutParams(-1, -1));
+        // Translucent material directly above the ACTUAL SystemUI wallpaper.
+        // Avoids mismatches from Figma screenshots or cached wallpaper files.
+        glassSurface = new GlassSurface(app);
+        card.addView(glassSurface, new FrameLayout.LayoutParams(-1, -1));
 
         LinearLayout content = new LinearLayout(app);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -297,19 +297,23 @@ public final class GlassOverlay {
         artistView.setGravity(Gravity.CENTER);
         content.addView(artistView, new LinearLayout.LayoutParams(-1, d(16)));
 
+        FrameLayout controlsArea = new FrameLayout(app);
+        LinearLayout.LayoutParams controlsLp = new LinearLayout.LayoutParams(-1, d(48));
+        controlsLp.topMargin = d(5);
+        content.addView(controlsArea, controlsLp);
+        // A fixed-width control group anchored to CENTER, independent of album/title.
         LinearLayout controls = new LinearLayout(app);
         controls.setGravity(Gravity.CENTER);
         controls.setOrientation(LinearLayout.HORIZONTAL);
-        LinearLayout.LayoutParams controlsLp = new LinearLayout.LayoutParams(-1, d(39));
-        controlsLp.topMargin = d(2);
-        content.addView(controls, controlsLp);
+        FrameLayout.LayoutParams groupLp = new FrameLayout.LayoutParams(d(204), -1, Gravity.CENTER);
+        controlsArea.addView(controls, groupLp);
 
         MediaButton previous = new MediaButton(app, 0);
         playButton = new MediaButton(app, 1);
         MediaButton next = new MediaButton(app, 2);
-        controls.addView(previous, new LinearLayout.LayoutParams(d(64), -1));
-        controls.addView(playButton, new LinearLayout.LayoutParams(d(64), -1));
-        controls.addView(next, new LinearLayout.LayoutParams(d(64), -1));
+        controls.addView(previous, new LinearLayout.LayoutParams(d(68), -1));
+        controls.addView(playButton, new LinearLayout.LayoutParams(d(68), -1));
+        controls.addView(next, new LinearLayout.LayoutParams(d(68), -1));
         previous.setContentDescription("Faixa anterior");
         playButton.setContentDescription("Reproduzir ou pausar");
         next.setContentDescription("Proxima faixa");
@@ -326,98 +330,181 @@ public final class GlassOverlay {
         // The full-screen backdrop, not the card, closes the expanded player.
         fullscreen.setOnClickListener(v -> hide());
         card.setOnClickListener(v -> {});
-        Log.i(TAG, "Layout Figma: card=" + cardWidth + "x" + cardHeight
-                + "px, arte=" + albumSize + "px, y=" + cardTop);
+        Log.i(TAG, "Layout v0.5: card=" + cardWidth + "x" + cardHeight
+                + "px, cover=" + albumSize + "px, centro=" + (sh/2));
         return fullscreen;
     }
 
-    /** Prefer the actual artwork provided by the user and bundled in this APK. */
-    private static Bitmap loadWallpaper(Context sysui) {
+    /**
+     * Hide *only* an identifiable large clock view in the SystemUI hierarchy.
+     * Never hide unknown containers or the lockscreen root. If it cannot be
+     * located, keep the real wallpaper and leave the clock intact.
+     */
+    private static void hideLargeClockViews() {
+        if (root == null) return;
         try {
-            Context module = sysui.createPackageContext(
-                    "dev.g41.glassplayer", Context.CONTEXT_IGNORE_SECURITY);
-            try (InputStream stream = module.getAssets().open("g41_lockscreen.jpg")) {
-                Bitmap bmp = BitmapFactory.decodeStream(stream);
-                if (bmp != null) {
-                    Log.i(TAG, "Wallpaper da referencia carregado do modulo");
-                    return bmp;
+            Class<?> cls = Class.forName("android.view.WindowManagerGlobal");
+            Object global = XposedHelpers.callStaticMethod(cls, "getInstance");
+            Object views = XposedHelpers.callMethod(global, "getRootViews");
+            if (!(views instanceof List)) {
+                Log.w(TAG,"Clock: getRootViews nao retornou lista");
+                return;
+            }
+            int before = hiddenClockAlphas.size();
+            for (Object candidate : (List<?>)views) {
+                if (candidate instanceof View && candidate != root) {
+                    hideClockChildren((View) candidate, 0);
                 }
             }
+            if (before == 0) Log.i(TAG,"Clock: Views ocultadas=" + hiddenClockAlphas.size()
+                    + " (0 = clock customizado ainda nao identificado)");
         } catch (Throwable t) {
-            Log.w(TAG, "Nao foi possivel abrir o wallpaper empacotado", t);
+            Log.w(TAG,"Clock: nao foi possivel acessar Views da lockscreen",t);
         }
+    }
+
+    private static void hideClockChildren(View v, int depth) {
+        if (v == null || v == root || depth > 32) return;
+        boolean candidate = false;
+        String name = v.getClass().getName();
+        String idName = "";
         try {
-            Drawable dw = WallpaperManager.getInstance(sysui).getDrawable();
-            if (dw != null && dw.getIntrinsicWidth() > 0 && dw.getIntrinsicHeight() > 0) {
-                int w = Math.min(dw.getIntrinsicWidth(), 1200);
-                int h = Math.min(dw.getIntrinsicHeight(), 2400);
-                Bitmap bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                Canvas canvas = new Canvas(bitmap);
-                dw.setBounds(0, 0, w, h);
-                dw.draw(canvas);
-                return bitmap;
+            if (v.getId() != View.NO_ID) {
+                idName = v.getResources().getResourceEntryName(v.getId()).toLowerCase(Locale.ROOT);
             }
+        } catch (Throwable ignored) { }
+        String cls = name.toLowerCase(Locale.ROOT);
+        boolean large = v.getHeight() >= d(100) && v.getWidth() >= d(100);
+        // Keep this deliberately narrow: never hide keyguard root or depth wallpaper.
+        if (large && (cls.endsWith("animatableclockview")
+                || cls.endsWith("largeclockview")
+                || cls.endsWith("clocklayout")
+                || idName.equals("large_clock")
+                || idName.equals("lockscreen_clock_view_large")
+                || idName.equals("keyguard_clock_large"))) {
+            candidate = true;
+        }
+        if (candidate) {
+            if (!hiddenClockAlphas.containsKey(v)) {
+                hiddenClockAlphas.put(v, v.getAlpha());
+                Log.i(TAG,"Clock: ocultando " + name + " id=" + idName);
+            }
+            v.setAlpha(0f);
+            return;
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup)v;
+            for (int i=0; i<g.getChildCount(); i++) hideClockChildren(g.getChildAt(i),depth+1);
+        }
+    }
+
+    private static void restoreClockViews() {
+        for (Map.Entry<View,Float> entry : hiddenClockAlphas.entrySet()) {
+            try { entry.getKey().setAlpha(entry.getValue()); }
+            catch (Throwable t) { Log.w(TAG,"Nao foi possivel restaurar clock",t); }
+        }
+        hiddenClockAlphas.clear();
+    }
+
+    /** Audio spectrum capture via the system mix (session 0), if permitted. */
+    private static void startAudioCapture() {
+        stopAudioCapture();
+        fftDataPresent = false;
+        audioEnergy = 0f;
+        try {
+            Visualizer v = new Visualizer(0);
+            visualizer = v; // assegura release() mesmo se a configuracao falhar
+            int[] range = Visualizer.getCaptureSizeRange();
+            v.setCaptureSize(Math.min(range[1], Math.max(range[0], 256)));
+            v.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
+                @Override public void onWaveFormDataCapture(Visualizer vis, byte[] bytes, int rate) { }
+                @Override public void onFftDataCapture(Visualizer vis, byte[] fft, int rate) {
+                    if (root == null || fft == null || fft.length < 24) return;
+                    double sum = 0;
+                    int count=0;
+                    // Lower frequencies drive the waves most visibly.
+                    for (int i=2; i+1<Math.min(fft.length, 90); i+=2) {
+                        int re=fft[i], im=fft[i+1];
+                        double magnitude=Math.hypot(re,im);
+                        sum += magnitude * (i < 28 ? 1.7 : .65);
+                        count++;
+                    }
+                    float e=(float)Math.max(0,Math.min(1,(sum/Math.max(1,count)-3)/45));
+                    audioEnergy=e;
+                    if (!fftDataPresent && e > .035f) {
+                        fftDataPresent=true;
+                        Log.i(TAG,"Ondas: FFT real recebido do audio do sistema");
+                    }
+                }
+            }, Math.min(20000,Visualizer.getMaxCaptureRate()), false, true);
+            v.setEnabled(true);
+            visualizer = v;
+            Log.i(TAG,"Ondas: captura de audio inicializada (Visualizer session=0)");
         } catch (Throwable t) {
-            Log.w(TAG, "WallpaperManager indisponivel", t);
-        }
-        return null;
-    }
-
-    private static final class WallpaperInsideCard extends View {
-        final Bitmap image;
-        final int screenW, screenH, left, top;
-        final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        WallpaperInsideCard(Context c, Bitmap img, int sw, int sh, int x, int y) {
-            super(c); image=img; screenW=sw; screenH=sh; left=x; top=y;
-        }
-        @Override protected void onDraw(Canvas c) {
-            float scale = Math.max(screenW / (float) image.getWidth(),
-                    screenH / (float) image.getHeight());
-            float x = (screenW - image.getWidth() * scale) / 2f - left;
-            float y = (screenH - image.getHeight() * scale) / 2f - top;
-            Matrix mx = new Matrix();
-            mx.setScale(scale, scale);
-            mx.postTranslate(x, y);
-            c.drawBitmap(image, mx, paint);
+            Log.w(TAG,"Ondas: audio real indisponivel; animando pelo estado play/pause",t);
+            stopAudioCapture();
         }
     }
 
-    /** Rounded milky glass surface and soft pale-blue waves from the Figma mockup. */
+    private static void stopAudioCapture() {
+        if (visualizer != null) {
+            try { visualizer.setEnabled(false); } catch (Throwable ignored) { }
+            try { visualizer.release(); } catch (Throwable ignored) { }
+        }
+        visualizer=null;
+    }
+
+    /** Two independent animated translucent waves reacting to FFT amplitude. */
     private static final class GlassSurface extends View {
         final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Path wave = new Path();
-        GlassSurface(Context c) { super(c); }
+        float phase=0f;
+        float smooth=0f;
+        GlassSurface(Context c) { super(c); setLayerType(View.LAYER_TYPE_HARDWARE,null); }
+        void animateFrame(float energy, boolean hasFft) {
+            // While playing, flow continuously; when FFT is present, beat energy
+            // also changes height and speed. Without FFT, gentle motion only.
+            float target=hasFft ? energy : .22f;
+            smooth += (target-smooth)*.20f;
+            phase += .045f + smooth*.038f;
+            invalidate();
+        }
+        void setResting() { smooth=0f; invalidate(); }
         @Override protected void onDraw(Canvas c) {
-            float w = getWidth(), h = getHeight();
+            float w=getWidth(), h=getHeight();
+            if (w<=0 || h<=0) return;
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xDCEFF1F5);
-            c.drawRect(0, 0, w, h, paint);
+            paint.setColor(0xDCF1F1F3); // milky glass; genuine wallpaper visible underneath
+            c.drawRect(0,0,w,h,paint);
 
-            wave.reset();
-            wave.moveTo(0, h*.69f);
-            wave.cubicTo(w*.12f,h*.56f, w*.13f,h*.70f, w*.29f,h*.73f);
-            wave.cubicTo(w*.42f,h*.82f, w*.56f,h*.72f, w*.65f,h*.79f);
-            wave.cubicTo(w*.73f,h*.64f, w*.77f,h*.69f, w*.83f,h*.76f);
-            wave.cubicTo(w*.91f,h*.86f, w*.91f,h*.60f, w,h*.70f);
-            wave.lineTo(w,h); wave.lineTo(0,h); wave.close();
-            paint.setColor(0x8391A9D0);
-            c.drawPath(wave,paint);
-
-            wave.reset();
-            wave.moveTo(0,h*.73f);
-            wave.cubicTo(w*.09f,h*.68f, w*.19f,h*.78f, w*.32f,h*.80f);
-            wave.cubicTo(w*.49f,h*.83f, w*.58f,h*.75f, w*.67f,h*.77f);
-            wave.cubicTo(w*.80f,h*.75f, w*.89f,h*.83f, w,h*.81f);
-            wave.lineTo(w,h); wave.lineTo(0,h); wave.close();
-            paint.setColor(0x459EB6DB);
-            c.drawPath(wave,paint);
+            drawWave(c,w,h,h*.735f,h*.040f + h*.048f*smooth,phase,0x9397B1D7);
+            drawWave(c,w,h,h*.792f,h*.017f + h*.025f*smooth,-phase*.72f+1.2f,0x5594ACD1);
 
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
-            paint.setColor(0x99FFFFFF);
-            RectF frame = new RectF(d(.5f), d(.5f),w-d(.5f),h-d(.5f));
+            paint.setColor(0xC6FFFFFF);
+            RectF frame=new RectF(d(.5f),d(.5f),w-d(.5f),h-d(.5f));
             c.drawRoundRect(frame,d(20),d(20),paint);
             paint.setStyle(Paint.Style.FILL);
+        }
+        private void drawWave(Canvas c,float w,float h,float base,float amplitude,
+                              float p,int color) {
+            wave.reset();
+            wave.moveTo(0,h);
+            wave.lineTo(0,base);
+            int steps=72;
+            for (int i=1;i<=steps;i++) {
+                float x=w*i/steps;
+                float t=x/w;
+                float y=base + amplitude*(float)(
+                    Math.sin(t*Math.PI*4.0 + p)*.67 +
+                    Math.sin(t*Math.PI*7.1 - p*.72)*.33);
+                wave.lineTo(x,y);
+            }
+            wave.lineTo(w,h);
+            wave.close();
+            paint.setColor(color);
+            c.drawPath(wave,paint);
         }
     }
 
@@ -570,6 +657,7 @@ public final class GlassOverlay {
         findController();
         if (controller==null) {
             if (progressView!=null) progressView.update(0,false);
+            setPlaying(false);
             return;
         }
         try {
@@ -590,8 +678,9 @@ public final class GlassOverlay {
                 }
                 durationMs=m.getLong(MediaMetadata.METADATA_KEY_DURATION);
             }
-            if (playButton!=null && st!=null)
-                playButton.setPlaying(st.getState()==PlaybackState.STATE_PLAYING);
+            boolean playingNow=st!=null && st.getState()==PlaybackState.STATE_PLAYING;
+            if (playButton!=null) playButton.setPlaying(playingNow);
+            setPlaying(playingNow);
             if (progressView!=null) {
                 boolean canSeek=durationMs>0 && st!=null;
                 float fraction=0f;
@@ -607,6 +696,13 @@ public final class GlassOverlay {
                 progressView.update(fraction,canSeek);
             }
         } catch(Throwable t) { Log.w(TAG,"Metadados de midia indisponiveis",t); }
+    }
+
+    private static void setPlaying(boolean playing) {
+        if (isPlaying==playing) return;
+        isPlaying=playing;
+        MAIN.removeCallbacks(WAVE_TICK);
+        if (root!=null) MAIN.post(WAVE_TICK);
     }
 
     private static void mediaKey(int key) {

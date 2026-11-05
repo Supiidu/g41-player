@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="G41 Glass Player (Figma v0.4)"
+        android:label="G41 Glass Player v0.5"
         android:allowBackup="false"
         android:hasCode="true">
         <meta-data android:name="xposedmodule" android:value="true" />

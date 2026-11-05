@@ -13,7 +13,7 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** G41 Glass Player v0.4 — Figma expanded player, on top of Infinity X keyguard. */
+/** G41 Glass Player v0.5 — centered player, live wallpaper and dynamic waves, on top of Infinity X keyguard. */
 public final class G41Hook implements IXposedHookLoadPackage {
     static final String TAG = "G41GlassPlayer";
     static final String SETTING = "g41_glass_player_enabled";
@@ -23,7 +23,7 @@ public final class G41Hook implements IXposedHookLoadPackage {
 
     @Override public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lp) {
         if (!SYSTEMUI.equals(lp.packageName)) return;
-        Log.i(TAG, "v0.4 Figma Edition iniciada em " + lp.processName);
+        Log.i(TAG, "v0.5 Live Waves iniciada em " + lp.processName);
         try {
             XposedHelpers.findAndHookMethod(EXPANSION, lp.classLoader, "expand",
                     new XC_MethodHook() {
@@ -48,11 +48,11 @@ public final class G41Hook implements IXposedHookLoadPackage {
                             param.setResult(null);
                         }
                     } catch (Throwable t) {
-                        Log.e(TAG, "v0.4: falha de overlay, InfinityBar original preservada", t);
+                        Log.e(TAG, "v0.5: falha de overlay, InfinityBar original preservada", t);
                     }
                 }
             });
-            Log.i(TAG, "Hook expand() v0.4 instalado; ativacao: settings put global "
+            Log.i(TAG, "Hook expand() v0.5 instalado; ativacao: settings put global "
                     + SETTING + " 1");
         } catch (Throwable t) {
             Log.e(TAG, "Hook expand() indisponivel. Modulo nao interfere no SystemUI.", t);
