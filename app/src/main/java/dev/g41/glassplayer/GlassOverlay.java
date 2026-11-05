@@ -139,7 +139,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.5.1");
+            lp.setTitle("G41 Glass Player v0.5.2");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -153,7 +153,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.5.1 ABERTO (wallpaper real, card central, ondas vivas)");
+            Log.i(TAG, "GLASS V0.5.2 ABERTO (wallpaper real, card central, ondas vivas)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.5 falhou; mantendo player original", t);
@@ -181,7 +181,7 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
-        Log.i(TAG, "GLASS V0.5.1 FECHADO: clock e lockscreen restaurados");
+        Log.i(TAG, "GLASS V0.5.2 FECHADO: clock e lockscreen restaurados");
     }
 
     private static void reset() {
@@ -385,7 +385,8 @@ public final class GlassOverlay {
         String cls = name.toLowerCase(Locale.ROOT);
         boolean large = v.getHeight() >= d(100) && v.getWidth() >= d(100);
         // Keep this deliberately narrow: never hide keyguard root or depth wallpaper.
-        if (large && (cls.endsWith("animatableclockview")
+        if (large && ((cls.equals("com.android.systemui.clocks.clockstyle") && idName.equals("clock_ls"))
+                || cls.endsWith("animatableclockview")
                 || cls.endsWith("largeclockview")
                 || cls.endsWith("clocklayout")
                 || idName.equals("large_clock_frame")
