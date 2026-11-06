@@ -1,7 +1,11 @@
 # Changelog
 
-Historical entries below are reconstructed from the ZIP snapshots supplied by the project owner. Their commit dates record publication to this repository, not original development dates.
+The v0.9.0 entry is a preview awaiting on-device testing, not a stable release. Historical entries below are reconstructed from the ZIP snapshots supplied by the project owner. Their commit dates record publication to this repository, not original development dates.
 
+- **v0.9.0-beta4 — Smooth Treble CAVA HD (test branch):** better real treble transients (FFT per-band peak/RMS blend and gentler high-frequency threshold), bounded treble tilt, light neighboring-band spread, slower treble release, 5-tap spatial smoothing and monotone cubic curve drawing instead of sharp quadratic peaks. Preserves bass/mids, Monet, bottom position, album color and full disappearance when paused. Adds configurable `g41_glass_cava_treble_boost` (default 0.80 after owner validation, range 0.7–2.0) and JVM regression cases.
+- **v0.9.0-beta3 — Balanced CAVA Spectrum (test branch):** mirrored mono frequency layout (bass center, treble at edges), bounded low/mid/treble adaptive EQ, logarithmic 35–12000 Hz Android FFT extraction with RMS-per-band aggregation, sparse-bin interpolation, and automated standalone JVM tests. Retains Monet, album color, card position and disappearance on pause.
+- **v0.9.0-beta2 — Single CAVA HD Wave (test branch):** replaces two translucent fluid layers with one album-colored filled 2D FFT silhouette, 144 smooth display samples, faster response and no bottom resting stripe; preserves Monet glass and lower placement. RMS fallback displays loudness only, not simulated spectral peaks.
+- **v0.9.0-beta1 — Monet & Lower Waves (test branch):** dynamic wallpaper palettes for glass/labels/buttons/progress, original album colors for waves, lower adjustable card placement, edge-to-edge bottom waves completely hidden on pause.
 - **v0.8.1 — Fluid Wave:** filled continuous waveform with interpolation and album-reactive colors; preserves existing audio capture modes.
 - **v0.8.0 — Compact:** experimental hiding of the compact InfinityBar while the expanded overlay is visible; adds `CompactBarVisibility`.
 - **v0.7.0 — CAVA:** FFT-driven CAVA-style spectrum bar visualization.

@@ -4,6 +4,7 @@ import android.app.KeyguardManager;
 import android.app.WallpaperManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
@@ -67,6 +68,16 @@ public final class GlassOverlay {
     private static final int TEXT = 0xFF11131A;
     private static final int MUTED = 0xFF5E6678;
     private static final int BLUE = 0xFF0857DB; // fallback if album art unavailable
+    // The card follows wallpaper-derived Monet. Artwork only colors the fluid waves.
+    private static final String SETTING_BOTTOM_MARGIN = "g41_glass_player_bottom_margin_dp";
+    private static int cardColor = 0xDCF1F1F3;
+    private static int primaryTextColor = TEXT;
+    private static int secondaryTextColor = MUTED;
+    private static int controlsColor = TEXT;
+    private static int progressColor = BLUE;
+    private static int trackColor = 0xFFE7E9ED;
+    private static int borderColor = 0xC6FFFFFF;
+    private static int placeholderBackground = 0xFFC7D1DE;
     private static final int BAND_COUNT = 24;
     private static final int AUDIO_PENDING = 0, AUDIO_FFT = 1, AUDIO_WAVEFORM = 2, AUDIO_UNAVAILABLE = 3;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -164,6 +175,7 @@ public final class GlassOverlay {
             wm = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
             if (wm == null) { reset(); return false; }
             findController();
+            loadMonetPalette(app);
             candidate = buildWindow(app, initialArt);
             applyColorsFromDrawable(initialArt);
 
@@ -178,7 +190,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.7");
+            lp.setTitle("G41 Glass Player v0.9.0-beta4");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -193,7 +205,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.8 ABERTO (clock restauravel, CAVA FFT, paleta da capa)");
+            Log.i(TAG, "GLASS V0.9.0-beta4 ABERTO (Monet, ondas album, card inferior)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
@@ -297,7 +309,14 @@ public final class GlassOverlay {
             }
         });
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(cardWidth, cardHeight);
-        cardLp.gravity = Gravity.CENTER;
+        // The wallpaper's character is above the player; retain the lower splash.
+        // Device-adjustable without rebuilding: settings put global
+        // g41_glass_player_bottom_margin_dp 70
+        int requestedBottom = Settings.Global.getInt(app.getContentResolver(),
+                SETTING_BOTTOM_MARGIN, 70);
+        int bottomDp = Math.max(8, Math.min(180, requestedBottom));
+        cardLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        cardLp.bottomMargin = Math.min(d(bottomDp), Math.max(d(8), sh - cardHeight - d(24)));
         fullscreen.addView(card, cardLp);
 
         // Translucent material directly above the ACTUAL SystemUI wallpaper.
@@ -314,7 +333,7 @@ public final class GlassOverlay {
         FrameLayout artFrame = new FrameLayout(app);
         LinearLayout.LayoutParams coverLp = new LinearLayout.LayoutParams(albumSize, albumSize);
         content.addView(artFrame, coverLp);
-        artFrame.setBackgroundColor(0xFFC7D1DE);
+        artFrame.setBackgroundColor(placeholderBackground);
         artFrame.setClipToOutline(true);
         artFrame.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View v, Outline out) {
@@ -325,7 +344,7 @@ public final class GlassOverlay {
         placeholder.setGravity(Gravity.CENTER);
         placeholder.setText("♫");
         placeholder.setTextSize(62);
-        placeholder.setTextColor(0xFF6681A9);
+        placeholder.setTextColor(controlsColor);
         artFrame.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         artView = new ImageView(app);
         artView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -333,7 +352,7 @@ public final class GlassOverlay {
         artFrame.addView(artView, new FrameLayout.LayoutParams(-1, -1));
 
         titleView = text(app, empty(initialTitle) ? "Reproduzindo agora" : initialTitle,
-                18, TEXT, true);
+                18, primaryTextColor, true);
         titleView.setMaxLines(1);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
         titleView.setGravity(Gravity.CENTER);
@@ -341,7 +360,7 @@ public final class GlassOverlay {
         titleLp.topMargin = d(6);
         content.addView(titleView, titleLp);
 
-        artistView = text(app, initialArtist, 13, MUTED, false);
+        artistView = text(app, initialArtist, 13, secondaryTextColor, false);
         artistView.setMaxLines(1);
         artistView.setEllipsize(TextUtils.TruncateAt.END);
         artistView.setGravity(Gravity.CENTER);
@@ -380,8 +399,8 @@ public final class GlassOverlay {
         // The full-screen backdrop, not the card, closes the expanded player.
         fullscreen.setOnClickListener(v -> hide());
         card.setOnClickListener(v -> {});
-        Log.i(TAG, "Layout v0.6: card=" + cardWidth + "x" + cardHeight
-                + "px, cover=" + albumSize + "px, centro=" + (sh/2));
+        Log.i(TAG, "Layout v0.9: card=" + cardWidth + "x" + cardHeight
+                + "px, cover=" + albumSize + "px, margem inferior=" + cardLp.bottomMargin + "px");
         return fullscreen;
     }
 
@@ -522,37 +541,28 @@ public final class GlassOverlay {
                 @Override public void onFftDataCapture(Visualizer vis, byte[] fft, int rate) {
                     if (root == null || fft == null || fft.length < 64) return;
                     fftFrames++;
-                    // Android reports 'rate' in milliHz. Each FFT bin is a real frequency.
-                    double samplingHz = rate / 1000.0;
-                    if (samplingHz < 8000d) samplingHz = 44100d;
-                    int n = fft.length;
-                    double[] sum = new double[BAND_COUNT];
-                    int[] counts = new int[BAND_COUNT];
-                    double totalSignal = 0d;
-                    float strongestBand = 0f;
-                    for (int k = 1; k < n / 2; k++) {
-                        double hz = k * samplingHz / n;
-                        if (hz < 45d || hz > 12000d) continue;
-                        int band = (int) (Math.log(hz / 45d) / Math.log(12000d / 45d)
-                                * BAND_COUNT);
-                        band = Math.max(0, Math.min(BAND_COUNT - 1, band));
-                        double mag = Math.hypot((double) fft[k * 2], (double) fft[k * 2 + 1]);
-                        sum[band] += mag;
-                        counts[band]++;
-                    }
-                    float[] bands = new float[BAND_COUNT];
+                    // rate is expressed in milliHz; parser handles bin frequency mapping.
+                    // Preserve 24 real log-frequency bands with RMS bin magnitudes.
+                    // Frequencies are 35-12000 Hz; very low empty bands are
+                    // interpolated because the Android FFT has coarse resolution.
+                    float[] bands = CavaSpectrum.extractBands(fft, rate);
+                    float sum = 0f, maximum = 0f;
+                    float low = 0f, mid = 0f, high = 0f;
                     for (int i = 0; i < BAND_COUNT; i++) {
-                        float mag = (float) (sum[i] / Math.max(1, counts[i]));
-                        // Noise gate + logarithmic magnitude mapping for quiet and loud tracks.
-                        float level = clamp01((float) ((Math.log1p(mag) - Math.log(3.5d)) / 2.9d));
-                        bands[i] = level;
-                        totalSignal += level;
-                        if (level > strongestBand) strongestBand = level;
+                        sum += bands[i];
+                        maximum = Math.max(maximum, bands[i]);
+                        if (i < 8) low += bands[i];
+                        else if (i < 16) mid += bands[i];
+                        else high += bands[i];
                     }
                     fftBands = bands; // atomic snapshot for the UI thread
-                    // A sparse bass-only spectrum can still be real audio.
-                    if (totalSignal / BAND_COUNT > .022d || strongestBand > .085f) {
+                    if (sum / BAND_COUNT > .022f || maximum > .085f) {
                         lastFftSignalAt = SystemClock.elapsedRealtime();
+                    }
+                    if (fftFrames % 160 == 0) {
+                        Log.i(TAG, String.format(Locale.ROOT,
+                                "CAVA FFT 24: graves=%.3f medios=%.3f agudos=%.3f max=%.3f",
+                                low / 8f, mid / 8f, high / 8f, maximum));
                     }
                 }
             }, Math.min(20000, Visualizer.getMaxCaptureRate()), true, true);
@@ -581,13 +591,58 @@ public final class GlassOverlay {
         return Math.max(0f, Math.min(1f, v));
     }
 
-    /** Only album colors change; the milky Figma card and dark labels remain fixed. */
+    // Resolve the public Android 12+ system tonal resources at runtime. This avoids
+    // adding Material libraries to the privileged SystemUI/Xposed module.
+    private static int tone(Context app, String name, int fallback) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return fallback;
+        try {
+            int id = app.getResources().getIdentifier(name, "color", "android");
+            return id == 0 ? fallback : app.getResources().getColor(id, app.getTheme());
+        } catch (Throwable t) {
+            Log.w(TAG, "Monet: cor indisponivel: " + name, t);
+            return fallback;
+        }
+    }
+
+    private static int opacity(int color, int alpha) {
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+    }
+
+    private static void loadMonetPalette(Context app) {
+        boolean dark = (app.getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        int surface = tone(app, dark ? "system_neutral1_900" : "system_neutral1_50",
+                dark ? 0xFF20232D : 0xFFF1F1F3);
+        // Keep the glass see-through instead of making it an opaque Material card.
+        cardColor = opacity(surface, 208);
+        primaryTextColor = tone(app, dark ? "system_neutral1_100" : "system_neutral1_900",
+                dark ? 0xFFF4F5FB : TEXT);
+        secondaryTextColor = tone(app, dark ? "system_neutral2_300" : "system_neutral2_700",
+                dark ? 0xFFBFC7D6 : MUTED);
+        controlsColor = tone(app, dark ? "system_accent1_200" : "system_accent1_700",
+                dark ? 0xFFA6C7FF : TEXT);
+        progressColor = tone(app, dark ? "system_accent1_200" : "system_accent1_600",
+                BLUE);
+        trackColor = tone(app, dark ? "system_neutral2_700" : "system_neutral2_200",
+                dark ? 0xFF555B68 : 0xFFE7E9ED);
+        placeholderBackground = tone(app,
+                dark ? "system_neutral1_700" : "system_neutral1_200",
+                dark ? 0xFF404956 : 0xFFC7D1DE);
+        borderColor = opacity(tone(app,
+                dark ? "system_neutral2_400" : "system_neutral1_0",
+                0xFFFFFFFF), dark ? 135 : 198);
+        Log.i(TAG, String.format(Locale.ROOT,
+                "Monet: sdk=%d dark=%s vidro=#%08X controle=#%06X progresso=#%06X",
+                Build.VERSION.SDK_INT, dark, cardColor,
+                controlsColor & 0xFFFFFF, progressColor & 0xFFFFFF));
+    }
+
+    /** Album palette only affects the two FFT/RMS waves. */
     private static void applyAccent(int color) {
         if (color == accentColor) return;
         accentColor = color;
         if (glassSurface != null) glassSurface.setAccent(color);
-        if (progressView != null) progressView.setAccent(color);
-        Log.i(TAG, String.format(Locale.ROOT, "Paleta: album accent=#%06X", color & 0xFFFFFF));
+        Log.i(TAG, String.format(Locale.ROOT, "Paleta: album wave=#%06X", color & 0xFFFFFF));
     }
 
     private static void applyColorsFromDrawable(Drawable art) {
@@ -666,231 +721,142 @@ public final class GlassOverlay {
     }
 
     /**
-     * v0.8.1 - Fluid Wave. Same REAL_FFT/RMS capture and dynamics as v0.7/v0.8.
-     * ONLY the rendering changes: continuous, filled, smoothed waves instead
-     * of rectangles. No artificial sine/random animation.
+     * v0.9.0-beta4 — CAVA spectrum with present treble and rounded crests.
+     * One HD filled 2D wave, bass in the center and treble at both edges.
+     * Keeps the original Monet glass and album-reactive accent.
      */
     private static final class GlassSurface extends View {
-        private static final int BARS = 36; // Existing FFT response resolution; do not change.
-        private static final int CURVE_SAMPLES = 72; // Visual interpolation only.
+        // Visual path resolution, not the number of frequency bands.
+        private static final int CURVE_SAMPLES = 144;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        private final float[] levels = new float[BARS];
-        private final float[] peaks = new float[BARS];
-        private final int[] peakHold = new int[BARS];
-        private final float[] foregroundY = new float[CURVE_SAMPLES + 1];
-        private final float[] backgroundY = new float[CURVE_SAMPLES + 1];
-        private final Path foregroundPath = new Path();
-        private final Path backgroundPath = new Path();
-        private final Path highlightPath = new Path();
+        private final float[] waveY = new float[CURVE_SAMPLES + 1];
+        private final float[] smoothY = new float[CURVE_SAMPLES + 1];
+        private final Path wavePath = new Path();
+        private final CavaSpectrum spectrum;
         private final float sensitivity;
-        private float autoGain = 1f;
         private int color = BLUE;
-        private Shader foregroundGradient;
-        private Shader backgroundGradient;
-        private float gradientTop = -1f;
-        private float gradientBottom = -1f;
+        private Shader waveGradient;
 
         GlassSurface(Context c) {
             super(c);
             setLayerType(View.LAYER_TYPE_HARDWARE, null);
-            float requested = Settings.Global.getFloat(c.getContentResolver(),
+            float configured = Settings.Global.getFloat(c.getContentResolver(),
                     "g41_glass_cava_sensitivity", 1f);
-            sensitivity = Math.max(0.5f, Math.min(2.5f, requested));
+            sensitivity = Math.max(.5f, Math.min(2.5f, configured));
+            float treble = Settings.Global.getFloat(c.getContentResolver(),
+                    "g41_glass_cava_treble_boost", .80f);
+            spectrum = new CavaSpectrum(treble);
             setAccent(accentColor);
-            Log.i(TAG, "FLUID v0.8.1: onda preenchida (2 camadas), origem=FFT atual,"
-                    + " interpolacao=" + CURVE_SAMPLES + " pontos, sensibilidade=" + sensitivity);
+            Log.i(TAG, "CAVA HD v0.9.0-beta4: agudos presentes, curva cubica,"
+                    + " EQ adaptativo 3 faixas, sensibilidade=" + sensitivity
+                    + ", trebleBoost=" + Math.max(.7f, Math.min(2f, treble)));
         }
 
         void setAccent(int next) {
             color = next;
-            foregroundGradient = null;
-            backgroundGradient = null;
+            waveGradient = null;
             invalidate();
         }
 
         @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
-            foregroundGradient = null;
-            backgroundGradient = null;
+            waveGradient = null;
         }
 
-        private float sampleBand(float[] fft, float position) {
-            int left = Math.max(0, Math.min(BAND_COUNT - 1, (int) position));
-            int right = Math.min(BAND_COUNT - 1, left + 1);
-            float fraction = position - left;
-            float center = fft[left] * (1f - fraction) + fft[right] * fraction;
-            float prev = fft[Math.max(0, left - 1)];
-            float next = fft[Math.min(BAND_COUNT - 1, right + 1)];
-            return center * .75f + prev * .125f + next * .125f;
-        }
-
-        /** Untouched FFT -> level/gain mapping from v0.7 (the part that already works). */
         void animateFrame(float[] fft, float rms, int mode) {
             if (mode == AUDIO_FFT && fft != null && fft.length >= BAND_COUNT) {
-                float sourcePeak = 0f;
-                for (int i = 0; i < BAND_COUNT; i++) {
-                    if (fft[i] > sourcePeak) sourcePeak = fft[i];
-                }
-                float wantedGain = .82f / Math.max(.28f, sourcePeak);
-                wantedGain = Math.max(.78f, Math.min(2.15f, wantedGain));
-                autoGain += (wantedGain - autoGain) * .025f;
-                for (int i = 0; i < BARS; i++) {
-                    float pos = i * (BAND_COUNT - 1f) / (BARS - 1f);
-                    float raw = sampleBand(fft, pos);
-                    float scaled = clamp01((raw - .035f) * autoGain * sensitivity);
-                    float target = (float) Math.pow(scaled, .85f);
-                    updateBar(i, target);
-                }
+                spectrum.updateFft(fft, sensitivity);
             } else if (mode == AUDIO_WAVEFORM) {
-                for (int i = 0; i < BARS; i++) {
-                    float t = (i + .5f) / BARS;
-                    float centered = (float) Math.pow(Math.sin(Math.PI * t), .72);
-                    updateBar(i, clamp01(rms * sensitivity * 1.6f)
-                            * (.28f + .72f * centered));
-                }
+                spectrum.updateRms(rms, sensitivity);
             } else {
-                for (int i = 0; i < BARS; i++) updateBar(i, 0f);
+                spectrum.reset();
             }
             invalidate();
-        }
-
-        private void updateBar(int i, float target) {
-            float current = levels[i];
-            current += (target - current) * (target > current ? .42f : .115f);
-            if (current < .0015f) current = 0f;
-            levels[i] = current;
-            if (current >= peaks[i]) {
-                peaks[i] = current;
-                peakHold[i] = 5;
-            } else if (peakHold[i] > 0) {
-                peakHold[i]--;
-            } else {
-                peaks[i] = Math.max(current, peaks[i] - .014f);
-            }
         }
 
         void setResting() {
-            autoGain = 1f;
-            for (int i = 0; i < BARS; i++) {
-                levels[i] = 0f;
-                peaks[i] = 0f;
-                peakHold[i] = 0;
-            }
+            spectrum.reset(); // Complete wave disappearance on pause.
             invalidate();
         }
 
-        /** Interpolation and spatial smoothing operate only on displayed levels. */
-        private float sampleLevel(float position, boolean soft) {
-            int left = Math.max(0, Math.min(BARS - 1, (int) position));
-            int right = Math.min(BARS - 1, left + 1);
-            float fraction = Math.max(0f, Math.min(1f, position - left));
-            float center = levels[left] * (1f - fraction) + levels[right] * fraction;
-            float outerL = levels[Math.max(0, left - 2)];
-            float outerR = levels[Math.min(BARS - 1, right + 2)];
-            float nearL = levels[Math.max(0, left - 1)];
-            float nearR = levels[Math.min(BARS - 1, right + 1)];
-            if (soft) return center * .25f + (nearL + nearR) * .24f
-                    + (outerL + outerR) * .135f;
-            return center * .64f + (nearL + nearR) * .135f
-                    + (outerL + outerR) * .045f;
-        }
-
-        private void ensureGradients(float top, float bottom) {
-            if (foregroundGradient != null && backgroundGradient != null
-                    && gradientTop == top && gradientBottom == bottom) return;
-            gradientTop = top;
-            gradientBottom = bottom;
+        private void ensureGradient(float h) {
+            if (waveGradient != null) return;
             int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
-            foregroundGradient = new android.graphics.LinearGradient(0, top, 0, bottom,
-                    new int[]{Color.argb(154, r, g, b), Color.argb(120, r, g, b),
-                            Color.argb(81, r, g, b)},
-                    new float[]{0f, .55f, 1f}, Shader.TileMode.CLAMP);
-            backgroundGradient = new android.graphics.LinearGradient(0, top, 0, bottom,
-                    new int[]{Color.argb(71, r, g, b), Color.argb(49, r, g, b),
-                            Color.argb(25, r, g, b)},
-                    new float[]{0f, .6f, 1f}, Shader.TileMode.CLAMP);
+            waveGradient = new android.graphics.LinearGradient(0f, h * .70f, 0f, h,
+                    new int[]{Color.argb(168, r, g, b), Color.argb(140, r, g, b),
+                            Color.argb(95, r, g, b)},
+                    new float[]{0f, .60f, 1f}, Shader.TileMode.CLAMP);
         }
 
-        private void traceFilledWave(Path path, float[] heights, float left,
-                float right, float baseline) {
-            path.rewind();
-            float step = (right - left) / CURVE_SAMPLES;
-            path.moveTo(left, baseline);
-            path.lineTo(left, heights[0]);
-            for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float previousX = left + (i - 1) * step;
-                float currentX = left + i * step;
-                path.quadTo(previousX, heights[i - 1],
-                        (previousX + currentX) / 2f,
-                        (heights[i - 1] + heights[i]) / 2f);
+        // Smooth rendered samples, not captured FFT values.
+        private void softenGeometry() {
+            for (int i = 0; i <= CURVE_SAMPLES; i++) {
+                float a = waveY[Math.max(0, i - 2)];
+                float b = waveY[Math.max(0, i - 1)];
+                float c = waveY[i];
+                float d = waveY[Math.min(CURVE_SAMPLES, i + 1)];
+                float e = waveY[Math.min(CURVE_SAMPLES, i + 2)];
+                smoothY[i] = .10f * a + .20f * b + .40f * c
+                        + .20f * d + .10f * e;
             }
-            path.lineTo(right, heights[CURVE_SAMPLES]);
-            path.lineTo(right, baseline);
-            path.close();
+            System.arraycopy(smoothY, 0, waveY, 0, waveY.length);
         }
 
-        @Override protected void onDraw(Canvas c) {
+        // Monotone cubic tangent: zero at peaks and valleys, to avoid
+        // Catmull-Rom overshoot that could sharpen a frequency spike.
+        private float tangentAt(int index) {
+            if (index <= 0 || index >= CURVE_SAMPLES) return 0f;
+            float left = waveY[index] - waveY[index - 1];
+            float right = waveY[index + 1] - waveY[index];
+            if (left * right <= 0f) return 0f;
+            float limit = 2f * Math.min(Math.abs(left), Math.abs(right));
+            float value = Math.min(Math.abs((left + right) * .5f), limit);
+            return Math.copySign(value, left);
+        }
+
+        private void traceWave(float w, float h) {
+            wavePath.rewind();
+            wavePath.moveTo(0f, h + 1f);
+            wavePath.lineTo(0f, waveY[0]);
+            float dx = w / CURVE_SAMPLES;
+            for (int i = 0; i < CURVE_SAMPLES; i++) {
+                float x0 = i * dx, x1 = (i + 1) * dx;
+                float dy0 = tangentAt(i), dy1 = tangentAt(i + 1);
+                wavePath.cubicTo(x0 + dx / 3f, waveY[i] + dy0 / 3f,
+                        x1 - dx / 3f, waveY[i + 1] - dy1 / 3f,
+                        x1, waveY[i + 1]);
+            }
+            wavePath.lineTo(w, h + 1f);
+            wavePath.close();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
             float w = getWidth(), h = getHeight();
             if (w <= 0f || h <= 0f) return;
 
-            // Preserve the same white translucent Figma card.
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xDCF1F1F3);
-            c.drawRect(0f, 0f, w, h, paint);
+            paint.setColor(cardColor); // unchanged Monet translucency
+            canvas.drawRect(0f, 0f, w, h, paint);
 
-            float left = d(18);
-            float right = w - d(18);
-            float baseline = h * .928f;
-            float maxRise = h * .204f;
-            ensureGradients(baseline - maxRise, baseline);
-
-            // 72 points are a smooth DISPLAY interpolation of the existing 36
-            // audio-responsive values. No extra FFT processing or synthetic beat.
-            for (int i = 0; i <= CURVE_SAMPLES; i++) {
-                float t = i / (float) CURVE_SAMPLES;
-                float position = t * (BARS - 1f);
-                float edge = (float) Math.pow(Math.max(0f, Math.sin(Math.PI * t)), .48d);
-                float front = sampleLevel(position, false);
-                float back = sampleLevel(position, true);
-                foregroundY[i] = baseline - front * maxRise * .94f * edge;
-                backgroundY[i] = baseline - back * maxRise * 1.12f * edge;
+            if (spectrum.isVisible()) {
+                float maxRise = h * .25f;
+                for (int i = 0; i <= CURVE_SAMPLES; i++) {
+                    float x = i / (float) CURVE_SAMPLES;
+                    waveY[i] = h - spectrum.levelAt(x) * maxRise;
+                }
+                softenGeometry();
+                traceWave(w, h);
+                ensureGradient(h);
+                paint.setShader(waveGradient);
+                canvas.drawPath(wavePath, paint);
+                paint.setShader(null);
             }
-            traceFilledWave(backgroundPath, backgroundY, left, right, h + 1f);
-            traceFilledWave(foregroundPath, foregroundY, left, right, h + 1f);
 
-            // Two translucent, filled curves: the second is broader, not random.
-            paint.setColor(Color.WHITE);
-            paint.setShader(backgroundGradient);
-            c.drawPath(backgroundPath, paint);
-            paint.setShader(foregroundGradient);
-            c.drawPath(foregroundPath, paint);
-            paint.setShader(null);
-
-            // Fine highlight along the leading edge. Do not trace the closed
-            // shape (which would also outline the left/right/bottom edges).
-            Path highlight = highlightPath;
-            highlight.rewind();
-            float step = (right - left) / CURVE_SAMPLES;
-            highlight.moveTo(left, foregroundY[0]);
-            for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float previousX = left + (i - 1) * step;
-                float currentX = left + i * step;
-                highlight.quadTo(previousX, foregroundY[i - 1],
-                        (previousX + currentX) / 2f,
-                        (foregroundY[i - 1] + foregroundY[i]) / 2f);
-            }
-            highlight.lineTo(right, foregroundY[CURVE_SAMPLES]);
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(d(.8f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setColor(Color.argb(105, Color.red(color), Color.green(color), Color.blue(color)));
-            c.drawPath(highlight, paint);
-
-            // Original card border from v0.8.
             paint.setStrokeWidth(d(1));
-            paint.setColor(0xC6FFFFFF);
-            c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
+            paint.setColor(borderColor);
+            canvas.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
                     d(20), d(20), paint);
             paint.setStyle(Paint.Style.FILL);
         }
@@ -905,7 +871,7 @@ public final class GlassOverlay {
         void setPlaying(boolean value) { if (playing!=value) { playing=value; invalidate(); } }
         @Override protected void onDraw(Canvas c) {
             float cx=getWidth()/2f, cy=getHeight()/2f;
-            p.setColor(TEXT);
+            p.setColor(controlsColor);
             p.setStrokeWidth(d(2.5f));
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeJoin(Paint.Join.ROUND);
@@ -950,9 +916,8 @@ public final class GlassOverlay {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float fraction=0;
         private boolean available=false;
-        private int color = accentColor;
+        private final int color = progressColor;
         ProgressLine(Context c) { super(c); setClickable(true); }
-        void setAccent(int next) { color = next; invalidate(); }
         void update(float f, boolean enabled) {
             if (!seeking) fraction=Math.max(0,Math.min(1,f));
             available=enabled;
@@ -964,7 +929,7 @@ public final class GlassOverlay {
             p.setStyle(Paint.Style.STROKE);
             p.setStrokeWidth(d(6));
             p.setStrokeCap(Paint.Cap.ROUND);
-            p.setColor(0xFFE7E9ED);
+            p.setColor(trackColor);
             c.drawLine(start,centerY,end,centerY,p);
             p.setColor(color);
             c.drawLine(start,centerY,start+(end-start)*fraction,centerY,p);
@@ -1099,6 +1064,7 @@ public final class GlassOverlay {
     private static void setPlaying(boolean playing) {
         if (isPlaying==playing) return;
         isPlaying=playing;
+        if (!playing && glassSurface != null) glassSurface.setResting();
         MAIN.removeCallbacks(WAVE_TICK);
         if (root!=null) MAIN.post(WAVE_TICK);
     }

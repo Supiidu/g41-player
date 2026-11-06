@@ -30,7 +30,9 @@ fi
 if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
   echo 'Gerando Gradle Wrapper 8.13 usando o Gradle instalado no computador...'
   mkdir -p .wrapper-bootstrap
-  : > .wrapper-bootstrap/settings.gradle
+  # Gradle 9+ rejects directory-derived project names that begin with '.'.
+  # Explicitly name the temporary bootstrap project to support host Gradle 9.x.
+  printf '%s\n' "rootProject.name = 'g41-wrapper-bootstrap'" > .wrapper-bootstrap/settings.gradle
   printf '%s\n' 'tasks.register("placeholder")' > .wrapper-bootstrap/build.gradle
   ( cd .wrapper-bootstrap && gradle wrapper --gradle-version 8.13 --distribution-type bin )
   mkdir -p gradle

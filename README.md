@@ -2,7 +2,7 @@
 
 **An experimental, audio-reactive lock-screen media interface for a Motorola Moto G41 repurposed as a dedicated music device.**
 
-![Version](https://img.shields.io/badge/version-0.8.1%20Fluid%20Wave-5965d9)
+![Version](https://img.shields.io/badge/version-0.9.0-beta4%20CAVA%20Smooth-5965d9)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Android](https://img.shields.io/badge/Android%20SDK-36-3ddc84)
 ![Status](https://img.shields.io/badge/status-experimental-f59e0b)
@@ -20,9 +20,11 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 
 ## Highlights
 
-- **Fluid Wave (v0.8.1):** two filled, continuously interpolated waves drawn with Android `Canvas` / `Path`, rather than separate CAVA-style bars.
+- **Smooth CAVA HD Wave (v0.9.0 beta4):** one album-colored, edge-to-edge filled 2D FFT silhouette, bass at center and treble at both edges. Treble is clearer through real FFT peak/RMS blending, bounded treble EQ and neighboring-band spread; 5-tap spatial smoothing and monotone cubic curves round sharp crests. Monet/transparency and lower card placement preserved; no waves on pause.
 - **Real audio response:** Android `Visualizer(0)` provides FFT data (24 frequency bands) or waveform RMS when available. The UI interpolates those measurements for smooth rendering; it does not invent beats or generate random music activity.
-- **Album-reactive colors:** the interface derives an accent from available artwork, with a fallback color.
+- **Wallpaper-aware Monet styling (v0.9.0 beta):** translucent card, text, buttons and progress take their colors from Android 12+ dynamic tonal palettes; FFT/RMS waves remain colored by album artwork.
+- **Wallpaper-first layout (v0.9.0 beta):** lower card placement with adjustable bottom inset; full-width filled waves that vanish entirely when paused.
+- **Album-reactive waves:** the interface derives their accent from available artwork, with a fallback color.
 - **Media controls:** track metadata, album art, previous/play-pause/next, and a seekable progress line backed by `MediaSessionManager` / `MediaController` when accessible; media key events are a fallback for playback controls.
 - **Lock-screen integration:** an expanded card over the device's real wallpaper, with conservative attempts to hide identifiable clock and compact InfinityBar views.
 - **Opt-in and recoverable:** the custom panel is disabled by default through an Android global setting. The original ROM expansion remains the fallback if hooking or overlay creation fails.
@@ -39,7 +41,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 | Hook scope | `com.android.systemui` only |
 | Build language / toolchain | Java 17, Android Gradle Plugin 8.13.2 |
 | Android configuration | `compileSdk 36`, `minSdk 28`, `targetSdk 35` |
-| Current source version | `0.8.1-fluid-wave` (`versionCode 11`) |
+| Current source version | `0.9.0-beta4.1-cava-smooth-treble` (`versionCode 16`), pending device validation |
 | Validation | Patch reconstruction verified; full Android build and device behavior **not independently validated** during import |
 
 The `minSdk` value is a build setting, **not a claim of compatibility** with Android 9+ devices. This integration depends on specific InfinityBar class names and ROM implementation details. In particular:
