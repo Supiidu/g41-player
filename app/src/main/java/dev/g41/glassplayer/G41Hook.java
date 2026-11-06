@@ -114,8 +114,12 @@ public final class G41Hook implements IXposedHookLoadPackage {
                             Object expansion = XposedHelpers.getObjectField(
                                     viewModel, "keyguardExpansion");
                             Object pinned = selectedMedia(expansion);
-                            if (pinned != null)
-                                CompactBarOverlay.observe(context, pinned, expansion);
+                            if (pinned != null) {
+                                // Do not add a new WindowManager view reentrantly
+                                // during the Compose render pass. Defer to next loop.
+                                new android.os.Handler(Looper.getMainLooper()).post(() ->
+                                        CompactBarOverlay.observe(context, pinned, expansion));
+                            }
                         } catch (Throwable t) {
                             Log.w(TAG, "Compact probe: falha isolada; Compose original intacto", t);
                         }
