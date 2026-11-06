@@ -66,6 +66,7 @@ public final class G41Hook implements IXposedHookLoadPackage {
             Log.e(TAG, "Hook expand() indisponivel. Modulo nao interfere no SystemUI.", t);
         }
         installCompactComposeProbe(lp.classLoader);
+        NativeMediaChipVisibility.install(lp.classLoader); // opt-in; original remains fallback
     }
 
     /**
