@@ -1,7 +1,8 @@
 # Changelog
 
-Historical entries below are reconstructed from the ZIP snapshots supplied by the project owner. Their commit dates record publication to this repository, not original development dates.
+The v0.9.0 entry is a preview awaiting on-device testing, not a stable release. Historical entries below are reconstructed from the ZIP snapshots supplied by the project owner. Their commit dates record publication to this repository, not original development dates.
 
+- **v0.9.0-beta1 — Monet & Lower Waves (test branch):** dynamic wallpaper palettes for glass/labels/buttons/progress, original album colors for waves, lower adjustable card placement, edge-to-edge bottom waves completely hidden on pause.
 - **v0.8.1 — Fluid Wave:** filled continuous waveform with interpolation and album-reactive colors; preserves existing audio capture modes.
 - **v0.8.0 — Compact:** experimental hiding of the compact InfinityBar while the expanded overlay is visible; adds `CompactBarVisibility`.
 - **v0.7.0 — CAVA:** FFT-driven CAVA-style spectrum bar visualization.
