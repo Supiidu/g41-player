@@ -190,7 +190,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.9.0-beta1");
+            lp.setTitle("G41 Glass Player v0.9.0-beta3");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -205,7 +205,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.9.0-beta1 ABERTO (Monet, ondas album, card inferior)");
+            Log.i(TAG, "GLASS V0.9.0-beta3 ABERTO (Monet, ondas album, card inferior)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
@@ -541,37 +541,28 @@ public final class GlassOverlay {
                 @Override public void onFftDataCapture(Visualizer vis, byte[] fft, int rate) {
                     if (root == null || fft == null || fft.length < 64) return;
                     fftFrames++;
-                    // Android reports 'rate' in milliHz. Each FFT bin is a real frequency.
-                    double samplingHz = rate / 1000.0;
-                    if (samplingHz < 8000d) samplingHz = 44100d;
-                    int n = fft.length;
-                    double[] sum = new double[BAND_COUNT];
-                    int[] counts = new int[BAND_COUNT];
-                    double totalSignal = 0d;
-                    float strongestBand = 0f;
-                    for (int k = 1; k < n / 2; k++) {
-                        double hz = k * samplingHz / n;
-                        if (hz < 45d || hz > 12000d) continue;
-                        int band = (int) (Math.log(hz / 45d) / Math.log(12000d / 45d)
-                                * BAND_COUNT);
-                        band = Math.max(0, Math.min(BAND_COUNT - 1, band));
-                        double mag = Math.hypot((double) fft[k * 2], (double) fft[k * 2 + 1]);
-                        sum[band] += mag;
-                        counts[band]++;
-                    }
-                    float[] bands = new float[BAND_COUNT];
+                    // rate is expressed in milliHz; parser handles bin frequency mapping.
+                    // Preserve 24 real log-frequency bands with RMS bin magnitudes.
+                    // Frequencies are 35-12000 Hz; very low empty bands are
+                    // interpolated because the Android FFT has coarse resolution.
+                    float[] bands = CavaSpectrum.extractBands(fft, rate);
+                    float sum = 0f, maximum = 0f;
+                    float low = 0f, mid = 0f, high = 0f;
                     for (int i = 0; i < BAND_COUNT; i++) {
-                        float mag = (float) (sum[i] / Math.max(1, counts[i]));
-                        // Noise gate + logarithmic magnitude mapping for quiet and loud tracks.
-                        float level = clamp01((float) ((Math.log1p(mag) - Math.log(3.5d)) / 2.9d));
-                        bands[i] = level;
-                        totalSignal += level;
-                        if (level > strongestBand) strongestBand = level;
+                        sum += bands[i];
+                        maximum = Math.max(maximum, bands[i]);
+                        if (i < 8) low += bands[i];
+                        else if (i < 16) mid += bands[i];
+                        else high += bands[i];
                     }
                     fftBands = bands; // atomic snapshot for the UI thread
-                    // A sparse bass-only spectrum can still be real audio.
-                    if (totalSignal / BAND_COUNT > .022d || strongestBand > .085f) {
+                    if (sum / BAND_COUNT > .022f || maximum > .085f) {
                         lastFftSignalAt = SystemClock.elapsedRealtime();
+                    }
+                    if (fftFrames % 160 == 0) {
+                        Log.i(TAG, String.format(Locale.ROOT,
+                                "CAVA FFT 24: graves=%.3f medios=%.3f agudos=%.3f max=%.3f",
+                                low / 8f, mid / 8f, high / 8f, maximum));
                     }
                 }
             }, Math.min(20000, Visualizer.getMaxCaptureRate()), true, true);
@@ -730,33 +721,31 @@ public final class GlassOverlay {
     }
 
     /**
-     * v0.9.0-beta2 — One HD 2D CAVA-style silhouette, filled from the
-     * real FFT amplitude to the card's bottom edge. No second layer,
-     * peak markers, artificial sine motion or colored resting baseline.
+     * v0.9.0-beta3 — Balanced mirrored CAVA-style spectrum.
+     * One HD filled 2D wave, bass in the center and treble at both edges.
+     * Keeps the original Monet glass and album-reactive accent.
      */
     private static final class GlassSurface extends View {
-        private static final int BARS = 36;
-        // Interpolated display points, NOT additional FFT frequency bands.
+        // Visual path resolution, not the number of frequency bands.
         private static final int CURVE_SAMPLES = 144;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
-        private final float[] levels = new float[BARS];
         private final float[] waveY = new float[CURVE_SAMPLES + 1];
         private final Path wavePath = new Path();
+        private final CavaSpectrum spectrum = new CavaSpectrum();
         private final float sensitivity;
-        private float autoGain = 1f;
         private int color = BLUE;
-        private boolean wavesVisible = false;
         private Shader waveGradient;
 
         GlassSurface(Context c) {
             super(c);
             setLayerType(View.LAYER_TYPE_HARDWARE, null);
-            float requested = Settings.Global.getFloat(c.getContentResolver(),
+            float configured = Settings.Global.getFloat(c.getContentResolver(),
                     "g41_glass_cava_sensitivity", 1f);
-            sensitivity = Math.max(0.5f, Math.min(2.5f, requested));
+            sensitivity = Math.max(.5f, Math.min(2.5f, configured));
             setAccent(accentColor);
-            Log.i(TAG, "CAVA HD v0.9.0-beta2: onda unica preenchida, origem=FFT/RMS,"
-                    + " pontos visuais=" + CURVE_SAMPLES + ", sensibilidade=" + sensitivity);
+            Log.i(TAG, "CAVA HD v0.9.0-beta3: frequencias espelhadas,"
+                    + " graves-centro/agudos-bordas, EQ adaptativo 3 faixas,"
+                    + " sensibilidade=" + sensitivity);
         }
 
         void setAccent(int next) {
@@ -770,99 +759,43 @@ public final class GlassOverlay {
             waveGradient = null;
         }
 
-        private float sampleBand(float[] fft, float position) {
-            int left = Math.max(0, Math.min(BAND_COUNT - 1, (int) position));
-            int right = Math.min(BAND_COUNT - 1, left + 1);
-            float fraction = Math.max(0f, Math.min(1f, position - left));
-            float center = fft[left] * (1f - fraction) + fft[right] * fraction;
-            float prev = fft[Math.max(0, left - 1)];
-            float next = fft[Math.min(BAND_COUNT - 1, right + 1)];
-            return center * .75f + prev * .125f + next * .125f;
-        }
-
-        /** Keep real FFT/RMS capture; only displayed geometry and response change. */
         void animateFrame(float[] fft, float rms, int mode) {
             if (mode == AUDIO_FFT && fft != null && fft.length >= BAND_COUNT) {
-                float sourcePeak = 0f;
-                for (int i = 0; i < BAND_COUNT; i++) {
-                    sourcePeak = Math.max(sourcePeak, fft[i]);
-                }
-                float wantedGain = .88f / Math.max(.24f, sourcePeak);
-                wantedGain = Math.max(.82f, Math.min(2.35f, wantedGain));
-                autoGain += (wantedGain - autoGain) * .04f;
-                for (int i = 0; i < BARS; i++) {
-                    float pos = i * (BAND_COUNT - 1f) / (BARS - 1f);
-                    float raw = sampleBand(fft, pos);
-                    float scaled = clamp01((raw - .03f) * autoGain * sensitivity);
-                    updateLevel(i, (float) Math.pow(scaled, .78f));
-                }
+                spectrum.updateFft(fft, sensitivity);
             } else if (mode == AUDIO_WAVEFORM) {
-                // RMS has loudness but no frequency-position information:
-                // show a level plateau instead of fabricating spectral peaks.
-                float target = clamp01(rms * sensitivity * 1.55f);
-                for (int i = 0; i < BARS; i++) updateLevel(i, target);
+                spectrum.updateRms(rms, sensitivity);
             } else {
-                setResting();
-                return;
+                spectrum.reset();
             }
-
-            boolean hasEnergy = false;
-            for (float level : levels) {
-                if (level > .004f) { hasEnergy = true; break; }
-            }
-            wavesVisible = hasEnergy;
             invalidate();
-        }
-
-        private void updateLevel(int i, float target) {
-            float current = levels[i];
-            current += (target - current) * (target > current ? .46f : .16f);
-            levels[i] = current < .001f ? 0f : current;
         }
 
         void setResting() {
-            wavesVisible = false;
-            autoGain = 1f;
-            for (int i = 0; i < BARS; i++) levels[i] = 0f;
+            spectrum.reset(); // Complete wave disappearance on pause.
             invalidate();
         }
 
-        /**
-         * Mild smoothing across adjacent bands prevents jagged pixel steps
-         * without turning discrete FFT features into a slow, liquid shape.
-         */
-        private float sampleLevel(float position) {
-            int left = Math.max(0, Math.min(BARS - 1, (int) position));
-            int right = Math.min(BARS - 1, left + 1);
-            float fraction = Math.max(0f, Math.min(1f, position - left));
-            float center = levels[left] * (1f - fraction) + levels[right] * fraction;
-            float nearL = levels[Math.max(0, left - 1)];
-            float nearR = levels[Math.min(BARS - 1, right + 1)];
-            return clamp01(center * .76f + (nearL + nearR) * .12f);
-        }
-
-        private void ensureGradient(float height) {
+        private void ensureGradient(float h) {
             if (waveGradient != null) return;
             int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
-            waveGradient = new android.graphics.LinearGradient(0f, height * .70f,
-                    0f, height,
+            waveGradient = new android.graphics.LinearGradient(0f, h * .70f, 0f, h,
                     new int[]{Color.argb(168, r, g, b), Color.argb(140, r, g, b),
                             Color.argb(95, r, g, b)},
                     new float[]{0f, .60f, 1f}, Shader.TileMode.CLAMP);
         }
 
-        private void traceSingleWave(float width, float height) {
+        private void traceWave(float w, float h) {
             wavePath.rewind();
-            wavePath.moveTo(0f, height + 1f);
+            wavePath.moveTo(0f, h + 1f);
             wavePath.lineTo(0f, waveY[0]);
             for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float prevX = (i - 1) * width / CURVE_SAMPLES;
-                float x = i * width / CURVE_SAMPLES;
+                float prevX = (i - 1) * w / CURVE_SAMPLES;
+                float x = i * w / CURVE_SAMPLES;
                 wavePath.quadTo(prevX, waveY[i - 1],
                         (prevX + x) * .5f, (waveY[i - 1] + waveY[i]) * .5f);
             }
-            wavePath.lineTo(width, waveY[CURVE_SAMPLES]);
-            wavePath.lineTo(width, height + 1f);
+            wavePath.lineTo(w, waveY[CURVE_SAMPLES]);
+            wavePath.lineTo(w, h + 1f);
             wavePath.close();
         }
 
@@ -870,28 +803,24 @@ public final class GlassOverlay {
             float w = getWidth(), h = getHeight();
             if (w <= 0f || h <= 0f) return;
 
-            // Monet glass remains visible, even if playback stops.
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(cardColor);
+            paint.setColor(cardColor); // unchanged Monet translucency
             canvas.drawRect(0f, 0f, w, h, paint);
 
-            if (wavesVisible) {
-                // Bottom = physical card edge. No 18dp margins or forced sine taper.
-                // One silhouette reacts to the original 24 frequency bands.
+            if (spectrum.isVisible()) {
                 float maxRise = h * .25f;
                 for (int i = 0; i <= CURVE_SAMPLES; i++) {
-                    float pos = i * (BARS - 1f) / CURVE_SAMPLES;
-                    waveY[i] = h - sampleLevel(pos) * maxRise;
+                    float x = i / (float) CURVE_SAMPLES;
+                    waveY[i] = h - spectrum.levelAt(x) * maxRise;
                 }
-                traceSingleWave(w, h);
+                traceWave(w, h);
                 ensureGradient(h);
                 paint.setShader(waveGradient);
                 canvas.drawPath(wavePath, paint);
                 paint.setShader(null);
             }
 
-            // Preserve a narrow rounded border, never flood-fill on pause.
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
             paint.setColor(borderColor);
