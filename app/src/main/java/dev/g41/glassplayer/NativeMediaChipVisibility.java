@@ -16,7 +16,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 
 /**
- * v0.10-beta2: suppress ONLY the native compact media chip.
+ * v0.10-beta3: suppress ONLY the native compact media chip.
  *
  * Based on the exact SystemUI-original.apk decompilation from the Moto G41:
  *
@@ -25,7 +25,8 @@ import de.robv.android.xposed.XposedHelpers;
  * A separate AnimatedVisibility(MutableTransitionState, ...) handles the
  * expanded panel. We hook only the boolean overload and replace its visibility
  * argument with false when the native chip is displaying media and our custom
- * compact window is already on screen.
+ * compact window OR expanded player is on screen. This prevents the original
+ * chip reappearing behind the expanded player during the audio handoff.
  *
  * Crucially, Compose still invokes its OWN AnimatedVisibility implementation
  * and manages its composition groups, transitions and cleanup. We do NOT
@@ -87,14 +88,14 @@ final class NativeMediaChipVisibility {
                         long now = SystemClock.uptimeMillis();
                         if (now - lastSuppressionLog > 4500L) {
                             lastSuppressionLog = now;
-                            Log.i(TAG, "Compact v0.10-beta2: ocultando somente"
+                            Log.i(TAG, "Compact v0.10-beta3: ocultando somente"
                                     + " AnimatedVisibility do chip nativo de MIDIA");
                         }
                     }
                 });
                 visibilityHooks++;
             }
-            Log.i(TAG, "Compact native v0.10-beta2: hooks Compose="
+            Log.i(TAG, "Compact native v0.10-beta3: hooks Compose="
                     + contextHooks + " AnimatedVisibility=" + visibilityHooks
                     + " (opt-in por " + SETTINGS_HIDE + ")");
         } catch (Throwable t) {
@@ -105,8 +106,12 @@ final class NativeMediaChipVisibility {
     }
 
     private static boolean maySuppress(Object viewModel, ClassLoader loader) {
+        // The expanded glass player replaces the compact preview. Keep the
+        // ROM chip hidden for BOTH states, including the handoff between them.
         if (viewModel == null || Looper.myLooper() != Looper.getMainLooper()
-                || !CompactBarOverlay.isVisible()) return false;
+                || (!CompactBarOverlay.isVisible() && !GlassOverlay.isOpen())) {
+            return false;
+        }
         try {
             Class<?> activityThread = XposedHelpers.findClass(
                     "android.app.ActivityThread", loader);
