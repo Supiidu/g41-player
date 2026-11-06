@@ -2,6 +2,7 @@
 
 The v0.9.0 entry is a preview awaiting on-device testing, not a stable release. Historical entries below are reconstructed from the ZIP snapshots supplied by the project owner. Their commit dates record publication to this repository, not original development dates.
 
+- **v0.9.0-beta3 — Balanced CAVA Spectrum (test branch):** mirrored mono frequency layout (bass center, treble at edges), bounded low/mid/treble adaptive EQ, logarithmic 35–12000 Hz Android FFT extraction with RMS-per-band aggregation, sparse-bin interpolation, and automated standalone JVM tests. Retains Monet, album color, card position and disappearance on pause.
 - **v0.9.0-beta2 — Single CAVA HD Wave (test branch):** replaces two translucent fluid layers with one album-colored filled 2D FFT silhouette, 144 smooth display samples, faster response and no bottom resting stripe; preserves Monet glass and lower placement. RMS fallback displays loudness only, not simulated spectral peaks.
 - **v0.9.0-beta1 — Monet & Lower Waves (test branch):** dynamic wallpaper palettes for glass/labels/buttons/progress, original album colors for waves, lower adjustable card placement, edge-to-edge bottom waves completely hidden on pause.
 - **v0.8.1 — Fluid Wave:** filled continuous waveform with interpolation and album-reactive colors; preserves existing audio capture modes.
