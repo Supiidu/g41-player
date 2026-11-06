@@ -41,7 +41,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 | Hook scope | `com.android.systemui` only |
 | Build language / toolchain | Java 17, Android Gradle Plugin 8.13.2 |
 | Android configuration | `compileSdk 36`, `minSdk 28`, `targetSdk 35` |
-| Current source version | `0.9.0-beta4-cava-smooth-treble` (`versionCode 15`), pending device validation |
+| Current source version | `0.9.0-beta4.1-cava-smooth-treble` (`versionCode 16`), pending device validation |
 | Validation | Patch reconstruction verified; full Android build and device behavior **not independently validated** during import |
 
 The `minSdk` value is a build setting, **not a claim of compatibility** with Android 9+ devices. This integration depends on specific InfinityBar class names and ROM implementation details. In particular:
