@@ -4,22 +4,29 @@ import android.app.Application;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.Log;
 import java.util.List;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** G41 Glass Player v0.5 — centered player, live wallpaper and dynamic waves, on top of Infinity X keyguard. */
+/** G41 Glass Player - media expansion plus an opt-in compact Compose chip preview. */
 public final class G41Hook implements IXposedHookLoadPackage {
     static final String TAG = "G41GlassPlayer";
     static final String SETTING = "g41_glass_player_enabled";
     private static final String SYSTEMUI = "com.android.systemui";
     private static final String EXPANSION =
             "com.android.systemui.axdynamicbar.ui.AxDynamicBarKeyguardExpansion";
+    private static final String CHIP_COMPOSABLE =
+            "com.android.systemui.axdynamicbar.ui.compose.AxDynamicBarKeyguardChipKt";
+    private static long lastCompactObservation;
 
     @Override public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lp) {
         if (!SYSTEMUI.equals(lp.packageName)) return;
@@ -44,7 +51,8 @@ public final class G41Hook implements IXposedHookLoadPackage {
                         Object media = selectedMedia(param.thisObject);
                         if (media == null) return;
                         if (GlassOverlay.showOrToggle(app, media)) {
-                            // Only suppress native expansion if our window actually opened/closed.
+                            // Never suppress native expansion unless our window succeeded.
+                            CompactBarOverlay.expandedChanged();
                             param.setResult(null);
                         }
                     } catch (Throwable t) {
@@ -57,9 +65,72 @@ public final class G41Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "Hook expand() indisponivel. Modulo nao interfere no SystemUI.", t);
         }
+        installCompactComposeProbe(lp.classLoader);
     }
 
-    private static Object selectedMedia(Object expansion) {
+    /**
+     * Read-only hook on the actual ROM compact chip's Compose body.
+     * Never skip the body, replace its Modifier or hide Compose root Views.
+     * A separate opt-in overlay is created only after a confirmed pinned
+     * IslandEvent.Media and while the keyguard is locked.
+     */
+    private static void installCompactComposeProbe(ClassLoader loader) {
+        try {
+            Class<?> chip = XposedHelpers.findClass(CHIP_COMPOSABLE, loader);
+            int count = 0;
+            for (Method method : chip.getDeclaredMethods()) {
+                if (!method.getName().contains("KeyguardChipBody")
+                        || !Modifier.isStatic(method.getModifiers())) continue;
+                Class<?>[] types = method.getParameterTypes();
+                if (types.length < 7 || !types[0].getName().endsWith(".IslandEvent"))
+                    continue;
+                int modelIndex = -1;
+                for (int i = 1; i < types.length; i++) {
+                    if (types[i].getName().endsWith(".AxDynamicBarChipViewModel")) {
+                        modelIndex = i;
+                        break;
+                    }
+                }
+                if (modelIndex < 0) continue;
+                final int idx = modelIndex;
+                XposedBridge.hookMethod(method, new XC_MethodHook() {
+                    @Override protected void afterHookedMethod(MethodHookParam param) {
+                        try {
+                            if (Looper.myLooper() != Looper.getMainLooper()) return;
+                            Object current = param.args[0];
+                            if (!isMedia(current)) return;
+                            long now = SystemClock.uptimeMillis();
+                            if (now - lastCompactObservation < 500L) return;
+                            lastCompactObservation = now;
+                            Object app = XposedHelpers.callStaticMethod(
+                                    XposedHelpers.findClass("android.app.ActivityThread",
+                                            loader), "currentApplication");
+                            if (!(app instanceof Application)) return;
+                            Context context = (Context) app;
+                            if (Settings.Global.getInt(context.getContentResolver(),
+                                    "g41_glass_compact_preview", 0) != 1) return;
+                            Object viewModel = param.args[idx];
+                            if (viewModel == null) return;
+                            Object expansion = XposedHelpers.getObjectField(
+                                    viewModel, "keyguardExpansion");
+                            Object pinned = selectedMedia(expansion);
+                            if (pinned != null)
+                                CompactBarOverlay.observe(context, pinned, expansion);
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Compact probe: falha isolada; Compose original intacto", t);
+                        }
+                    }
+                });
+                count++;
+            }
+            Log.i(TAG, "Compact probe v0.10: composables identificados=" + count
+                    + " (overlay opt-in; nativo preservado)");
+        } catch (Throwable t) {
+            Log.w(TAG, "Compact probe v0.10: classe nao encontrada; InfinityBar nativa", t);
+        }
+    }
+
+    static Object selectedMedia(Object expansion) {
         try {
             Object interactor = XposedHelpers.getObjectField(expansion, "interactor");
             Object flow = XposedHelpers.getObjectField(interactor, "uiState");
