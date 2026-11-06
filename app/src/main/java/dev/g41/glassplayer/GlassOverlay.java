@@ -238,6 +238,9 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
+        // Closing via backdrop, ESC or lifecycle must restore the compact
+        // media preview too. It will re-check keyguard/power/settings first.
+        CompactBarOverlay.expandedChanged();
         Log.i(TAG, "GLASS V0.8 FECHADO: clock e lockscreen restaurados");
     }
 
