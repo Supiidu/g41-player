@@ -2,7 +2,7 @@
 
 **An experimental, audio-reactive lock-screen media interface for a Motorola Moto G41 repurposed as a dedicated music device.**
 
-![Version](https://img.shields.io/badge/version-0.9.0-beta1%20Monet-5965d9)
+![Version](https://img.shields.io/badge/version-0.9.0-beta2%20CAVA%20HD-5965d9)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Android](https://img.shields.io/badge/Android%20SDK-36-3ddc84)
 ![Status](https://img.shields.io/badge/status-experimental-f59e0b)
@@ -20,7 +20,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 
 ## Highlights
 
-- **Fluid Wave (v0.8.1+):** two filled, continuously interpolated waves drawn with Android `Canvas` / `Path`, rather than separate CAVA-style bars.
+- **Single CAVA HD Wave (v0.9.0 beta2):** one album-colored, edge-to-edge filled 2D FFT silhouette, drawn with Android `Canvas` / `Path` and 144 interpolated visual samples; no fake additional frequency bands. Removes double-layer liquid styling, hides wave entirely on pause. RMS fallback shows a simple loudness plateau.
 - **Real audio response:** Android `Visualizer(0)` provides FFT data (24 frequency bands) or waveform RMS when available. The UI interpolates those measurements for smooth rendering; it does not invent beats or generate random music activity.
 - **Wallpaper-aware Monet styling (v0.9.0 beta):** translucent card, text, buttons and progress take their colors from Android 12+ dynamic tonal palettes; FFT/RMS waves remain colored by album artwork.
 - **Wallpaper-first layout (v0.9.0 beta):** lower card placement with adjustable bottom inset; full-width filled waves that vanish entirely when paused.
@@ -41,7 +41,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 | Hook scope | `com.android.systemui` only |
 | Build language / toolchain | Java 17, Android Gradle Plugin 8.13.2 |
 | Android configuration | `compileSdk 36`, `minSdk 28`, `targetSdk 35` |
-| Current source version | `0.9.0-beta1-monet` (`versionCode 12`), pending device validation |
+| Current source version | `0.9.0-beta2-cava-hd` (`versionCode 13`), pending device validation |
 | Validation | Patch reconstruction verified; full Android build and device behavior **not independently validated** during import |
 
 The `minSdk` value is a build setting, **not a claim of compatibility** with Android 9+ devices. This integration depends on specific InfinityBar class names and ROM implementation details. In particular:
