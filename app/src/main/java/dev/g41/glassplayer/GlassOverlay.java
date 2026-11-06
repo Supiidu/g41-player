@@ -957,7 +957,9 @@ public final class GlassOverlay {
             c.drawPath(highlight, paint);
             } // Paused/unavailable audio: no waves, gradients, or bottom color band.
 
-            // Glass outline must remain visible even if the waves are hidden.
+            // Without an explicit stroke here, pausing would fill the WHOLE card
+            // with the border color instead of preserving its transparency.
+            paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
             paint.setColor(borderColor);
             c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
