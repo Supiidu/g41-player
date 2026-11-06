@@ -1,6 +1,7 @@
 package dev.g41.glassplayer;
 
 import android.app.Application;
+import android.app.KeyguardManager;
 import android.content.Context;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -119,6 +120,9 @@ final class NativeMediaChipVisibility {
                     "g41_glass_compact_preview", 0) != 1
                     || Settings.Global.getInt(context.getContentResolver(),
                     G41Hook.SETTING, 0) != 1) return false;
+            KeyguardManager keyguard = (KeyguardManager)
+                    context.getSystemService(Context.KEYGUARD_SERVICE);
+            if (keyguard == null || !keyguard.isKeyguardLocked()) return false;
 
             // ViewModel.chipState includes notificationAlert and selected event.
             // A notificationAlert has priority in the actual ROM compositor.
