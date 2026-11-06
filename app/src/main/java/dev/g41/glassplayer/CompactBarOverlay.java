@@ -441,6 +441,16 @@ final class CompactBarOverlay {
         private final float[] y = new float[WAVE_POINTS + 1];
 
         MiniWave(Context c) { super(c); }
+        private float tangentAt(int index) {
+            if (index <= 0 || index >= WAVE_POINTS) return 0f;
+            float left = y[index] - y[index - 1];
+            float right = y[index + 1] - y[index];
+            if (left * right <= 0f) return 0f;
+            float magnitude = Math.min(Math.abs((left + right) * .5f),
+                    2f * Math.min(Math.abs(left), Math.abs(right)));
+            return Math.copySign(magnitude, left);
+        }
+
         @Override protected void onDraw(Canvas canvas) {
             if (!spectrum.isVisible()) return;
             float w = getWidth(), h = getHeight();
@@ -452,13 +462,16 @@ final class CompactBarOverlay {
             shape.rewind();
             shape.moveTo(0f, h + 1f);
             shape.lineTo(0f, y[0]);
-            for (int i = 1; i <= WAVE_POINTS; i++) {
-                float x0 = (i - 1) * w / WAVE_POINTS;
-                float x1 = i * w / WAVE_POINTS;
-                shape.quadTo(x0, y[i-1], (x0 + x1) * .5f,
-                        (y[i-1] + y[i]) * .5f);
+            // Rounded monotone cubic segments, like the approved HD player.
+            // Zero slopes at local extrema prevent triangular spikes/overshoot.
+            float dx = w / WAVE_POINTS;
+            for (int i = 0; i < WAVE_POINTS; i++) {
+                float x0 = i * dx, x1 = (i + 1) * dx;
+                float slope0 = tangentAt(i), slope1 = tangentAt(i + 1);
+                shape.cubicTo(x0 + dx / 3f, y[i] + slope0 / 3f,
+                        x1 - dx / 3f, y[i + 1] - slope1 / 3f,
+                        x1, y[i + 1]);
             }
-            shape.lineTo(w, y[WAVE_POINTS]);
             shape.lineTo(w, h + 1f);
             shape.close();
 
