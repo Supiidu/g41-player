@@ -79,6 +79,9 @@ final class CompactBarOverlay {
 
     private CompactBarOverlay() { }
 
+    /** Only suppress the native Compose chip after our replacement was added. */
+    static boolean isVisible() { return card != null; }
+
     private static int dp(float value) {
         if (context == null) return Math.round(value);
         return Math.round(value * context.getResources().getDisplayMetrics().density);
