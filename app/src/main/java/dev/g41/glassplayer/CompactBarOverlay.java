@@ -2,15 +2,11 @@ package dev.g41.glassplayer;
 
 import android.app.KeyguardManager;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PixelFormat;
-import android.graphics.RectF;
-import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
@@ -21,6 +17,7 @@ import android.media.session.MediaSessionManager;
 import android.media.session.PlaybackState;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -122,6 +119,9 @@ final class CompactBarOverlay {
                     || Settings.Global.getInt(context.getContentResolver(), SETTING, 0) != 1) {
                 return false;
             }
+            PowerManager power = (PowerManager)
+                    context.getSystemService(Context.POWER_SERVICE);
+            if (power != null && !power.isInteractive()) return false;
             KeyguardManager km = (KeyguardManager)
                     context.getSystemService(Context.KEYGUARD_SERVICE);
             return km != null && km.isKeyguardLocked();
