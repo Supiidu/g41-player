@@ -197,6 +197,11 @@ public final class GlassOverlay {
             wm.addView(candidate, lp);
 
             root = candidate;
+            // IMPORTANT: both compact and expanded use Android Visualizer(0).
+            // Release the compact effect BEFORE starting expanded capture,
+            // otherwise the compact FFT can starve the approved CAVA waves.
+            CompactBarOverlay.expandedChanged();
+            Log.i(TAG, "Audio FFT: compact liberado antes de iniciar expanded");
             hideLargeClockViews(); // leaves original wallpaper and depth effect intact
             CompactBarVisibility.hide(app, candidate); // v0.8: conservative chip hide
             startAudioCapture();
@@ -220,6 +225,9 @@ public final class GlassOverlay {
             restoreClockViews();
             CompactBarVisibility.restore();
             reset();
+            // If expanded creation failed after the compact visualizer was
+            // released, immediately restore the working compact preview.
+            CompactBarOverlay.expandedChanged();
             return false;
         }
     }
