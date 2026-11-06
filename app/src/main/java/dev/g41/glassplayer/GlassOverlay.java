@@ -190,7 +190,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.9.0-beta3");
+            lp.setTitle("G41 Glass Player v0.9.0-beta4");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -205,7 +205,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.9.0-beta3 ABERTO (Monet, ondas album, card inferior)");
+            Log.i(TAG, "GLASS V0.9.0-beta4 ABERTO (Monet, ondas album, card inferior)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
@@ -721,7 +721,7 @@ public final class GlassOverlay {
     }
 
     /**
-     * v0.9.0-beta3 — Balanced mirrored CAVA-style spectrum.
+     * v0.9.0-beta4 — CAVA spectrum with present treble and rounded crests.
      * One HD filled 2D wave, bass in the center and treble at both edges.
      * Keeps the original Monet glass and album-reactive accent.
      */
@@ -730,8 +730,9 @@ public final class GlassOverlay {
         private static final int CURVE_SAMPLES = 144;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final float[] waveY = new float[CURVE_SAMPLES + 1];
+        private final float[] smoothY = new float[CURVE_SAMPLES + 1];
         private final Path wavePath = new Path();
-        private final CavaSpectrum spectrum = new CavaSpectrum();
+        private final CavaSpectrum spectrum;
         private final float sensitivity;
         private int color = BLUE;
         private Shader waveGradient;
@@ -742,10 +743,13 @@ public final class GlassOverlay {
             float configured = Settings.Global.getFloat(c.getContentResolver(),
                     "g41_glass_cava_sensitivity", 1f);
             sensitivity = Math.max(.5f, Math.min(2.5f, configured));
+            float treble = Settings.Global.getFloat(c.getContentResolver(),
+                    "g41_glass_cava_treble_boost", 1.25f);
+            spectrum = new CavaSpectrum(treble);
             setAccent(accentColor);
-            Log.i(TAG, "CAVA HD v0.9.0-beta3: frequencias espelhadas,"
-                    + " graves-centro/agudos-bordas, EQ adaptativo 3 faixas,"
-                    + " sensibilidade=" + sensitivity);
+            Log.i(TAG, "CAVA HD v0.9.0-beta4: agudos presentes, curva cubica,"
+                    + " EQ adaptativo 3 faixas, sensibilidade=" + sensitivity
+                    + ", trebleBoost=" + Math.max(.7f, Math.min(2f, treble)));
         }
 
         void setAccent(int next) {
@@ -784,17 +788,44 @@ public final class GlassOverlay {
                     new float[]{0f, .60f, 1f}, Shader.TileMode.CLAMP);
         }
 
+        // Smooth rendered samples, not captured FFT values.
+        private void softenGeometry() {
+            for (int i = 0; i <= CURVE_SAMPLES; i++) {
+                float a = waveY[Math.max(0, i - 2)];
+                float b = waveY[Math.max(0, i - 1)];
+                float c = waveY[i];
+                float d = waveY[Math.min(CURVE_SAMPLES, i + 1)];
+                float e = waveY[Math.min(CURVE_SAMPLES, i + 2)];
+                smoothY[i] = .10f * a + .20f * b + .40f * c
+                        + .20f * d + .10f * e;
+            }
+            System.arraycopy(smoothY, 0, waveY, 0, waveY.length);
+        }
+
+        // Monotone cubic tangent: zero at peaks and valleys, to avoid
+        // Catmull-Rom overshoot that could sharpen a frequency spike.
+        private float tangentAt(int index) {
+            if (index <= 0 || index >= CURVE_SAMPLES) return 0f;
+            float left = waveY[index] - waveY[index - 1];
+            float right = waveY[index + 1] - waveY[index];
+            if (left * right <= 0f) return 0f;
+            float limit = 2f * Math.min(Math.abs(left), Math.abs(right));
+            float value = Math.min(Math.abs((left + right) * .5f), limit);
+            return Math.copySign(value, left);
+        }
+
         private void traceWave(float w, float h) {
             wavePath.rewind();
             wavePath.moveTo(0f, h + 1f);
             wavePath.lineTo(0f, waveY[0]);
-            for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float prevX = (i - 1) * w / CURVE_SAMPLES;
-                float x = i * w / CURVE_SAMPLES;
-                wavePath.quadTo(prevX, waveY[i - 1],
-                        (prevX + x) * .5f, (waveY[i - 1] + waveY[i]) * .5f);
+            float dx = w / CURVE_SAMPLES;
+            for (int i = 0; i < CURVE_SAMPLES; i++) {
+                float x0 = i * dx, x1 = (i + 1) * dx;
+                float dy0 = tangentAt(i), dy1 = tangentAt(i + 1);
+                wavePath.cubicTo(x0 + dx / 3f, waveY[i] + dy0 / 3f,
+                        x1 - dx / 3f, waveY[i + 1] - dy1 / 3f,
+                        x1, waveY[i + 1]);
             }
-            wavePath.lineTo(w, waveY[CURVE_SAMPLES]);
             wavePath.lineTo(w, h + 1f);
             wavePath.close();
         }
@@ -814,6 +845,7 @@ public final class GlassOverlay {
                     float x = i / (float) CURVE_SAMPLES;
                     waveY[i] = h - spectrum.levelAt(x) * maxRise;
                 }
+                softenGeometry();
                 traceWave(w, h);
                 ensureGradient(h);
                 paint.setShader(waveGradient);
