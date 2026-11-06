@@ -35,8 +35,8 @@ O teste Java cobre silêncio, gate, baixo no centro, agudos nas bordas, espelham
 ## Ajustar agudos pelo ADB sem recompilar
 
 ```bash
-# 1.25: padrão beta4
-adb shell settings put global g41_glass_cava_treble_boost 1.25
+# 0.80: novo padrão aprovado
+adb shell settings put global g41_glass_cava_treble_boost 0.80
 
 # 1.50: agudos um pouco mais presentes
 adb shell settings put global g41_glass_cava_treble_boost 1.50
@@ -48,7 +48,9 @@ adb shell settings put global g41_glass_cava_treble_boost 1.85
 adb shell settings put global g41_glass_cava_treble_boost 1.00
 ```
 
-Faixa aceita: 0.70 a 2.00. **Feche e reabra o player para aplicar**. Se surgirem falsas reações nas pontas durante trechos silenciosos, volte a 1.00.
+Faixa aceita: 0.70 a 2.00. **Feche e reabra o player para aplicar**.
+
+**Importante:** o fallback 0.80 só funciona quando não existe um valor salvo em `Settings.Global`. Se você já havia ajustado o boost, execute o comando `settings put ... 0.80` acima, ou apague o override com `adb shell settings delete global g41_glass_cava_treble_boost` para usar o novo padrão. Se surgirem falsas reações nas pontas durante trechos silenciosos, volte a 1.00.
 
 Os ajustes já existentes continuam:
 
