@@ -31,9 +31,9 @@ final class CavaSpectrum {
     private boolean visible;
     private final float trebleBoost;
 
-    CavaSpectrum() { this(1.25f); }
+    CavaSpectrum() { this(.80f); }
 
-    /** Experimental treble tuning without recompiling; baseline=1.25. */
+    /** Experimental treble tuning without recompiling; baseline=0.80. */
     CavaSpectrum(float boost) {
         trebleBoost = clamp(boost, .7f, 2f);
         reset();
