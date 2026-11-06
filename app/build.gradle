@@ -10,8 +10,8 @@ android {
         applicationId 'dev.g41.glassplayer'
         minSdk 28
         targetSdk 35
-        versionCode 12
-        versionName '0.9.0-beta1-monet'
+        versionCode 13
+        versionName '0.9.0-beta2-cava-hd'
     }
 
     buildTypes {
