@@ -4,6 +4,7 @@ import android.app.KeyguardManager;
 import android.app.WallpaperManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
@@ -67,6 +68,16 @@ public final class GlassOverlay {
     private static final int TEXT = 0xFF11131A;
     private static final int MUTED = 0xFF5E6678;
     private static final int BLUE = 0xFF0857DB; // fallback if album art unavailable
+    // The card follows wallpaper-derived Monet. Artwork only colors the fluid waves.
+    private static final String SETTING_BOTTOM_MARGIN = "g41_glass_player_bottom_margin_dp";
+    private static int cardColor = 0xDCF1F1F3;
+    private static int primaryTextColor = TEXT;
+    private static int secondaryTextColor = MUTED;
+    private static int controlsColor = TEXT;
+    private static int progressColor = BLUE;
+    private static int trackColor = 0xFFE7E9ED;
+    private static int borderColor = 0xC6FFFFFF;
+    private static int placeholderBackground = 0xFFC7D1DE;
     private static final int BAND_COUNT = 24;
     private static final int AUDIO_PENDING = 0, AUDIO_FFT = 1, AUDIO_WAVEFORM = 2, AUDIO_UNAVAILABLE = 3;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -164,6 +175,7 @@ public final class GlassOverlay {
             wm = (WindowManager) app.getSystemService(Context.WINDOW_SERVICE);
             if (wm == null) { reset(); return false; }
             findController();
+            loadMonetPalette(app);
             candidate = buildWindow(app, initialArt);
             applyColorsFromDrawable(initialArt);
 
@@ -178,7 +190,7 @@ public final class GlassOverlay {
             lp.gravity = Gravity.TOP | Gravity.LEFT;
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            lp.setTitle("G41 Glass Player v0.7");
+            lp.setTitle("G41 Glass Player v0.9.0-beta1");
             wm.addView(candidate, lp);
 
             root = candidate;
@@ -193,7 +205,7 @@ public final class GlassOverlay {
             MAIN.postDelayed(TICK, 850L);
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(220).start();
-            Log.i(TAG, "GLASS V0.8 ABERTO (clock restauravel, CAVA FFT, paleta da capa)");
+            Log.i(TAG, "GLASS V0.9.0-beta1 ABERTO (Monet, ondas album, card inferior)");
             return true;
         } catch (Throwable t) {
             Log.e(TAG, "Overlay v0.7 falhou; mantendo player original", t);
@@ -297,7 +309,14 @@ public final class GlassOverlay {
             }
         });
         FrameLayout.LayoutParams cardLp = new FrameLayout.LayoutParams(cardWidth, cardHeight);
-        cardLp.gravity = Gravity.CENTER;
+        // The wallpaper's character is above the player; retain the lower splash.
+        // Device-adjustable without rebuilding: settings put global
+        // g41_glass_player_bottom_margin_dp 70
+        int requestedBottom = Settings.Global.getInt(app.getContentResolver(),
+                SETTING_BOTTOM_MARGIN, 70);
+        int bottomDp = Math.max(8, Math.min(180, requestedBottom));
+        cardLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        cardLp.bottomMargin = Math.min(d(bottomDp), Math.max(d(8), sh - cardHeight - d(24)));
         fullscreen.addView(card, cardLp);
 
         // Translucent material directly above the ACTUAL SystemUI wallpaper.
@@ -314,7 +333,7 @@ public final class GlassOverlay {
         FrameLayout artFrame = new FrameLayout(app);
         LinearLayout.LayoutParams coverLp = new LinearLayout.LayoutParams(albumSize, albumSize);
         content.addView(artFrame, coverLp);
-        artFrame.setBackgroundColor(0xFFC7D1DE);
+        artFrame.setBackgroundColor(placeholderBackground);
         artFrame.setClipToOutline(true);
         artFrame.setOutlineProvider(new ViewOutlineProvider() {
             @Override public void getOutline(View v, Outline out) {
@@ -325,7 +344,7 @@ public final class GlassOverlay {
         placeholder.setGravity(Gravity.CENTER);
         placeholder.setText("♫");
         placeholder.setTextSize(62);
-        placeholder.setTextColor(0xFF6681A9);
+        placeholder.setTextColor(controlsColor);
         artFrame.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         artView = new ImageView(app);
         artView.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -333,7 +352,7 @@ public final class GlassOverlay {
         artFrame.addView(artView, new FrameLayout.LayoutParams(-1, -1));
 
         titleView = text(app, empty(initialTitle) ? "Reproduzindo agora" : initialTitle,
-                18, TEXT, true);
+                18, primaryTextColor, true);
         titleView.setMaxLines(1);
         titleView.setEllipsize(TextUtils.TruncateAt.END);
         titleView.setGravity(Gravity.CENTER);
@@ -341,7 +360,7 @@ public final class GlassOverlay {
         titleLp.topMargin = d(6);
         content.addView(titleView, titleLp);
 
-        artistView = text(app, initialArtist, 13, MUTED, false);
+        artistView = text(app, initialArtist, 13, secondaryTextColor, false);
         artistView.setMaxLines(1);
         artistView.setEllipsize(TextUtils.TruncateAt.END);
         artistView.setGravity(Gravity.CENTER);
@@ -380,8 +399,8 @@ public final class GlassOverlay {
         // The full-screen backdrop, not the card, closes the expanded player.
         fullscreen.setOnClickListener(v -> hide());
         card.setOnClickListener(v -> {});
-        Log.i(TAG, "Layout v0.6: card=" + cardWidth + "x" + cardHeight
-                + "px, cover=" + albumSize + "px, centro=" + (sh/2));
+        Log.i(TAG, "Layout v0.9: card=" + cardWidth + "x" + cardHeight
+                + "px, cover=" + albumSize + "px, margem inferior=" + cardLp.bottomMargin + "px");
         return fullscreen;
     }
 
@@ -581,13 +600,58 @@ public final class GlassOverlay {
         return Math.max(0f, Math.min(1f, v));
     }
 
-    /** Only album colors change; the milky Figma card and dark labels remain fixed. */
+    // Resolve the public Android 12+ system tonal resources at runtime. This avoids
+    // adding Material libraries to the privileged SystemUI/Xposed module.
+    private static int tone(Context app, String name, int fallback) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return fallback;
+        try {
+            int id = app.getResources().getIdentifier(name, "color", "android");
+            return id == 0 ? fallback : app.getResources().getColor(id, app.getTheme());
+        } catch (Throwable t) {
+            Log.w(TAG, "Monet: cor indisponivel: " + name, t);
+            return fallback;
+        }
+    }
+
+    private static int opacity(int color, int alpha) {
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color));
+    }
+
+    private static void loadMonetPalette(Context app) {
+        boolean dark = (app.getResources().getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+        int surface = tone(app, dark ? "system_neutral1_900" : "system_neutral1_50",
+                dark ? 0xFF20232D : 0xFFF1F1F3);
+        // Keep the glass see-through instead of making it an opaque Material card.
+        cardColor = opacity(surface, 208);
+        primaryTextColor = tone(app, dark ? "system_neutral1_100" : "system_neutral1_900",
+                dark ? 0xFFF4F5FB : TEXT);
+        secondaryTextColor = tone(app, dark ? "system_neutral2_300" : "system_neutral2_700",
+                dark ? 0xFFBFC7D6 : MUTED);
+        controlsColor = tone(app, dark ? "system_accent1_200" : "system_accent1_700",
+                dark ? 0xFFA6C7FF : TEXT);
+        progressColor = tone(app, dark ? "system_accent1_200" : "system_accent1_600",
+                BLUE);
+        trackColor = tone(app, dark ? "system_neutral2_700" : "system_neutral2_200",
+                dark ? 0xFF555B68 : 0xFFE7E9ED);
+        placeholderBackground = tone(app,
+                dark ? "system_neutral1_700" : "system_neutral1_200",
+                dark ? 0xFF404956 : 0xFFC7D1DE);
+        borderColor = opacity(tone(app,
+                dark ? "system_neutral2_400" : "system_neutral1_0",
+                0xFFFFFFFF), dark ? 135 : 198);
+        Log.i(TAG, String.format(Locale.ROOT,
+                "Monet: sdk=%d dark=%s vidro=#%08X controle=#%06X progresso=#%06X",
+                Build.VERSION.SDK_INT, dark, cardColor,
+                controlsColor & 0xFFFFFF, progressColor & 0xFFFFFF));
+    }
+
+    /** Album palette only affects the two FFT/RMS waves. */
     private static void applyAccent(int color) {
         if (color == accentColor) return;
         accentColor = color;
         if (glassSurface != null) glassSurface.setAccent(color);
-        if (progressView != null) progressView.setAccent(color);
-        Log.i(TAG, String.format(Locale.ROOT, "Paleta: album accent=#%06X", color & 0xFFFFFF));
+        Log.i(TAG, String.format(Locale.ROOT, "Paleta: album wave=#%06X", color & 0xFFFFFF));
     }
 
     private static void applyColorsFromDrawable(Drawable art) {
@@ -685,6 +749,7 @@ public final class GlassOverlay {
         private final float sensitivity;
         private float autoGain = 1f;
         private int color = BLUE;
+        private boolean wavesVisible = false;
         private Shader foregroundGradient;
         private Shader backgroundGradient;
         private float gradientTop = -1f;
@@ -726,6 +791,7 @@ public final class GlassOverlay {
 
         /** Untouched FFT -> level/gain mapping from v0.7 (the part that already works). */
         void animateFrame(float[] fft, float rms, int mode) {
+            wavesVisible = mode == AUDIO_FFT || mode == AUDIO_WAVEFORM;
             if (mode == AUDIO_FFT && fft != null && fft.length >= BAND_COUNT) {
                 float sourcePeak = 0f;
                 for (int i = 0; i < BAND_COUNT; i++) {
@@ -770,6 +836,7 @@ public final class GlassOverlay {
         }
 
         void setResting() {
+            wavesVisible = false; // No residual gradient or colored baseline on pause.
             autoGain = 1f;
             for (int i = 0; i < BARS; i++) {
                 levels[i] = 0f;
@@ -833,14 +900,16 @@ public final class GlassOverlay {
             float w = getWidth(), h = getHeight();
             if (w <= 0f || h <= 0f) return;
 
-            // Preserve the same white translucent Figma card.
+            // Wallpaper-toned translucent glass; it persists when audio is paused.
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xDCF1F1F3);
+            paint.setColor(cardColor);
             c.drawRect(0f, 0f, w, h, paint);
 
-            float left = d(18);
-            float right = w - d(18);
+            if (wavesVisible) {
+            // Edge-to-edge waves. Card's rounded outline clips both side edges.
+            float left = 0f;
+            float right = w;
             float baseline = h * .928f;
             float maxRise = h * .204f;
             ensureGradients(baseline - maxRise, baseline);
@@ -886,10 +955,11 @@ public final class GlassOverlay {
             paint.setStrokeCap(Paint.Cap.ROUND);
             paint.setColor(Color.argb(105, Color.red(color), Color.green(color), Color.blue(color)));
             c.drawPath(highlight, paint);
+            } // Paused/unavailable audio: no waves, gradients, or bottom color band.
 
-            // Original card border from v0.8.
+            // Glass outline must remain visible even if the waves are hidden.
             paint.setStrokeWidth(d(1));
-            paint.setColor(0xC6FFFFFF);
+            paint.setColor(borderColor);
             c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
                     d(20), d(20), paint);
             paint.setStyle(Paint.Style.FILL);
@@ -905,7 +975,7 @@ public final class GlassOverlay {
         void setPlaying(boolean value) { if (playing!=value) { playing=value; invalidate(); } }
         @Override protected void onDraw(Canvas c) {
             float cx=getWidth()/2f, cy=getHeight()/2f;
-            p.setColor(TEXT);
+            p.setColor(controlsColor);
             p.setStrokeWidth(d(2.5f));
             p.setStrokeCap(Paint.Cap.ROUND);
             p.setStrokeJoin(Paint.Join.ROUND);
@@ -950,9 +1020,8 @@ public final class GlassOverlay {
         private final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         private float fraction=0;
         private boolean available=false;
-        private int color = accentColor;
+        private final int color = progressColor;
         ProgressLine(Context c) { super(c); setClickable(true); }
-        void setAccent(int next) { color = next; invalidate(); }
         void update(float f, boolean enabled) {
             if (!seeking) fraction=Math.max(0,Math.min(1,f));
             available=enabled;
@@ -964,7 +1033,7 @@ public final class GlassOverlay {
             p.setStyle(Paint.Style.STROKE);
             p.setStrokeWidth(d(6));
             p.setStrokeCap(Paint.Cap.ROUND);
-            p.setColor(0xFFE7E9ED);
+            p.setColor(trackColor);
             c.drawLine(start,centerY,end,centerY,p);
             p.setColor(color);
             c.drawLine(start,centerY,start+(end-start)*fraction,centerY,p);
@@ -1099,6 +1168,7 @@ public final class GlassOverlay {
     private static void setPlaying(boolean playing) {
         if (isPlaying==playing) return;
         isPlaying=playing;
+        if (!playing && glassSurface != null) glassSurface.setResting();
         MAIN.removeCallbacks(WAVE_TICK);
         if (root!=null) MAIN.post(WAVE_TICK);
     }
