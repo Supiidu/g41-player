@@ -730,30 +730,23 @@ public final class GlassOverlay {
     }
 
     /**
-     * v0.8.1 - Fluid Wave. Same REAL_FFT/RMS capture and dynamics as v0.7/v0.8.
-     * ONLY the rendering changes: continuous, filled, smoothed waves instead
-     * of rectangles. No artificial sine/random animation.
+     * v0.9.0-beta2 — One HD 2D CAVA-style silhouette, filled from the
+     * real FFT amplitude to the card's bottom edge. No second layer,
+     * peak markers, artificial sine motion or colored resting baseline.
      */
     private static final class GlassSurface extends View {
-        private static final int BARS = 36; // Existing FFT response resolution; do not change.
-        private static final int CURVE_SAMPLES = 72; // Visual interpolation only.
+        private static final int BARS = 36;
+        // Interpolated display points, NOT additional FFT frequency bands.
+        private static final int CURVE_SAMPLES = 144;
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
         private final float[] levels = new float[BARS];
-        private final float[] peaks = new float[BARS];
-        private final int[] peakHold = new int[BARS];
-        private final float[] foregroundY = new float[CURVE_SAMPLES + 1];
-        private final float[] backgroundY = new float[CURVE_SAMPLES + 1];
-        private final Path foregroundPath = new Path();
-        private final Path backgroundPath = new Path();
-        private final Path highlightPath = new Path();
+        private final float[] waveY = new float[CURVE_SAMPLES + 1];
+        private final Path wavePath = new Path();
         private final float sensitivity;
         private float autoGain = 1f;
         private int color = BLUE;
         private boolean wavesVisible = false;
-        private Shader foregroundGradient;
-        private Shader backgroundGradient;
-        private float gradientTop = -1f;
-        private float gradientBottom = -1f;
+        private Shader waveGradient;
 
         GlassSurface(Context c) {
             super(c);
@@ -762,207 +755,147 @@ public final class GlassOverlay {
                     "g41_glass_cava_sensitivity", 1f);
             sensitivity = Math.max(0.5f, Math.min(2.5f, requested));
             setAccent(accentColor);
-            Log.i(TAG, "FLUID v0.8.1: onda preenchida (2 camadas), origem=FFT atual,"
-                    + " interpolacao=" + CURVE_SAMPLES + " pontos, sensibilidade=" + sensitivity);
+            Log.i(TAG, "CAVA HD v0.9.0-beta2: onda unica preenchida, origem=FFT/RMS,"
+                    + " pontos visuais=" + CURVE_SAMPLES + ", sensibilidade=" + sensitivity);
         }
 
         void setAccent(int next) {
             color = next;
-            foregroundGradient = null;
-            backgroundGradient = null;
+            waveGradient = null;
             invalidate();
         }
 
         @Override protected void onSizeChanged(int w, int h, int oldw, int oldh) {
             super.onSizeChanged(w, h, oldw, oldh);
-            foregroundGradient = null;
-            backgroundGradient = null;
+            waveGradient = null;
         }
 
         private float sampleBand(float[] fft, float position) {
             int left = Math.max(0, Math.min(BAND_COUNT - 1, (int) position));
             int right = Math.min(BAND_COUNT - 1, left + 1);
-            float fraction = position - left;
+            float fraction = Math.max(0f, Math.min(1f, position - left));
             float center = fft[left] * (1f - fraction) + fft[right] * fraction;
             float prev = fft[Math.max(0, left - 1)];
             float next = fft[Math.min(BAND_COUNT - 1, right + 1)];
             return center * .75f + prev * .125f + next * .125f;
         }
 
-        /** Untouched FFT -> level/gain mapping from v0.7 (the part that already works). */
+        /** Keep real FFT/RMS capture; only displayed geometry and response change. */
         void animateFrame(float[] fft, float rms, int mode) {
-            wavesVisible = mode == AUDIO_FFT || mode == AUDIO_WAVEFORM;
             if (mode == AUDIO_FFT && fft != null && fft.length >= BAND_COUNT) {
                 float sourcePeak = 0f;
                 for (int i = 0; i < BAND_COUNT; i++) {
-                    if (fft[i] > sourcePeak) sourcePeak = fft[i];
+                    sourcePeak = Math.max(sourcePeak, fft[i]);
                 }
-                float wantedGain = .82f / Math.max(.28f, sourcePeak);
-                wantedGain = Math.max(.78f, Math.min(2.15f, wantedGain));
-                autoGain += (wantedGain - autoGain) * .025f;
+                float wantedGain = .88f / Math.max(.24f, sourcePeak);
+                wantedGain = Math.max(.82f, Math.min(2.35f, wantedGain));
+                autoGain += (wantedGain - autoGain) * .04f;
                 for (int i = 0; i < BARS; i++) {
                     float pos = i * (BAND_COUNT - 1f) / (BARS - 1f);
                     float raw = sampleBand(fft, pos);
-                    float scaled = clamp01((raw - .035f) * autoGain * sensitivity);
-                    float target = (float) Math.pow(scaled, .85f);
-                    updateBar(i, target);
+                    float scaled = clamp01((raw - .03f) * autoGain * sensitivity);
+                    updateLevel(i, (float) Math.pow(scaled, .78f));
                 }
             } else if (mode == AUDIO_WAVEFORM) {
-                for (int i = 0; i < BARS; i++) {
-                    float t = (i + .5f) / BARS;
-                    float centered = (float) Math.pow(Math.sin(Math.PI * t), .72);
-                    updateBar(i, clamp01(rms * sensitivity * 1.6f)
-                            * (.28f + .72f * centered));
-                }
+                // RMS has loudness but no frequency-position information:
+                // show a level plateau instead of fabricating spectral peaks.
+                float target = clamp01(rms * sensitivity * 1.55f);
+                for (int i = 0; i < BARS; i++) updateLevel(i, target);
             } else {
-                for (int i = 0; i < BARS; i++) updateBar(i, 0f);
+                setResting();
+                return;
             }
+
+            boolean hasEnergy = false;
+            for (float level : levels) {
+                if (level > .004f) { hasEnergy = true; break; }
+            }
+            wavesVisible = hasEnergy;
             invalidate();
         }
 
-        private void updateBar(int i, float target) {
+        private void updateLevel(int i, float target) {
             float current = levels[i];
-            current += (target - current) * (target > current ? .42f : .115f);
-            if (current < .0015f) current = 0f;
-            levels[i] = current;
-            if (current >= peaks[i]) {
-                peaks[i] = current;
-                peakHold[i] = 5;
-            } else if (peakHold[i] > 0) {
-                peakHold[i]--;
-            } else {
-                peaks[i] = Math.max(current, peaks[i] - .014f);
-            }
+            current += (target - current) * (target > current ? .46f : .16f);
+            levels[i] = current < .001f ? 0f : current;
         }
 
         void setResting() {
-            wavesVisible = false; // No residual gradient or colored baseline on pause.
+            wavesVisible = false;
             autoGain = 1f;
-            for (int i = 0; i < BARS; i++) {
-                levels[i] = 0f;
-                peaks[i] = 0f;
-                peakHold[i] = 0;
-            }
+            for (int i = 0; i < BARS; i++) levels[i] = 0f;
             invalidate();
         }
 
-        /** Interpolation and spatial smoothing operate only on displayed levels. */
-        private float sampleLevel(float position, boolean soft) {
+        /**
+         * Mild smoothing across adjacent bands prevents jagged pixel steps
+         * without turning discrete FFT features into a slow, liquid shape.
+         */
+        private float sampleLevel(float position) {
             int left = Math.max(0, Math.min(BARS - 1, (int) position));
             int right = Math.min(BARS - 1, left + 1);
             float fraction = Math.max(0f, Math.min(1f, position - left));
             float center = levels[left] * (1f - fraction) + levels[right] * fraction;
-            float outerL = levels[Math.max(0, left - 2)];
-            float outerR = levels[Math.min(BARS - 1, right + 2)];
             float nearL = levels[Math.max(0, left - 1)];
             float nearR = levels[Math.min(BARS - 1, right + 1)];
-            if (soft) return center * .25f + (nearL + nearR) * .24f
-                    + (outerL + outerR) * .135f;
-            return center * .64f + (nearL + nearR) * .135f
-                    + (outerL + outerR) * .045f;
+            return clamp01(center * .76f + (nearL + nearR) * .12f);
         }
 
-        private void ensureGradients(float top, float bottom) {
-            if (foregroundGradient != null && backgroundGradient != null
-                    && gradientTop == top && gradientBottom == bottom) return;
-            gradientTop = top;
-            gradientBottom = bottom;
+        private void ensureGradient(float height) {
+            if (waveGradient != null) return;
             int r = Color.red(color), g = Color.green(color), b = Color.blue(color);
-            foregroundGradient = new android.graphics.LinearGradient(0, top, 0, bottom,
-                    new int[]{Color.argb(154, r, g, b), Color.argb(120, r, g, b),
-                            Color.argb(81, r, g, b)},
-                    new float[]{0f, .55f, 1f}, Shader.TileMode.CLAMP);
-            backgroundGradient = new android.graphics.LinearGradient(0, top, 0, bottom,
-                    new int[]{Color.argb(71, r, g, b), Color.argb(49, r, g, b),
-                            Color.argb(25, r, g, b)},
-                    new float[]{0f, .6f, 1f}, Shader.TileMode.CLAMP);
+            waveGradient = new android.graphics.LinearGradient(0f, height * .70f,
+                    0f, height,
+                    new int[]{Color.argb(168, r, g, b), Color.argb(140, r, g, b),
+                            Color.argb(95, r, g, b)},
+                    new float[]{0f, .60f, 1f}, Shader.TileMode.CLAMP);
         }
 
-        private void traceFilledWave(Path path, float[] heights, float left,
-                float right, float baseline) {
-            path.rewind();
-            float step = (right - left) / CURVE_SAMPLES;
-            path.moveTo(left, baseline);
-            path.lineTo(left, heights[0]);
+        private void traceSingleWave(float width, float height) {
+            wavePath.rewind();
+            wavePath.moveTo(0f, height + 1f);
+            wavePath.lineTo(0f, waveY[0]);
             for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float previousX = left + (i - 1) * step;
-                float currentX = left + i * step;
-                path.quadTo(previousX, heights[i - 1],
-                        (previousX + currentX) / 2f,
-                        (heights[i - 1] + heights[i]) / 2f);
+                float prevX = (i - 1) * width / CURVE_SAMPLES;
+                float x = i * width / CURVE_SAMPLES;
+                wavePath.quadTo(prevX, waveY[i - 1],
+                        (prevX + x) * .5f, (waveY[i - 1] + waveY[i]) * .5f);
             }
-            path.lineTo(right, heights[CURVE_SAMPLES]);
-            path.lineTo(right, baseline);
-            path.close();
+            wavePath.lineTo(width, waveY[CURVE_SAMPLES]);
+            wavePath.lineTo(width, height + 1f);
+            wavePath.close();
         }
 
-        @Override protected void onDraw(Canvas c) {
+        @Override protected void onDraw(Canvas canvas) {
             float w = getWidth(), h = getHeight();
             if (w <= 0f || h <= 0f) return;
 
-            // Wallpaper-toned translucent glass; it persists when audio is paused.
+            // Monet glass remains visible, even if playback stops.
             paint.setShader(null);
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(cardColor);
-            c.drawRect(0f, 0f, w, h, paint);
+            canvas.drawRect(0f, 0f, w, h, paint);
 
             if (wavesVisible) {
-            // Edge-to-edge waves. Card's rounded outline clips both side edges.
-            float left = 0f;
-            float right = w;
-            float baseline = h * .928f;
-            float maxRise = h * .204f;
-            ensureGradients(baseline - maxRise, baseline);
-
-            // 72 points are a smooth DISPLAY interpolation of the existing 36
-            // audio-responsive values. No extra FFT processing or synthetic beat.
-            for (int i = 0; i <= CURVE_SAMPLES; i++) {
-                float t = i / (float) CURVE_SAMPLES;
-                float position = t * (BARS - 1f);
-                float edge = (float) Math.pow(Math.max(0f, Math.sin(Math.PI * t)), .48d);
-                float front = sampleLevel(position, false);
-                float back = sampleLevel(position, true);
-                foregroundY[i] = baseline - front * maxRise * .94f * edge;
-                backgroundY[i] = baseline - back * maxRise * 1.12f * edge;
+                // Bottom = physical card edge. No 18dp margins or forced sine taper.
+                // One silhouette reacts to the original 24 frequency bands.
+                float maxRise = h * .25f;
+                for (int i = 0; i <= CURVE_SAMPLES; i++) {
+                    float pos = i * (BARS - 1f) / CURVE_SAMPLES;
+                    waveY[i] = h - sampleLevel(pos) * maxRise;
+                }
+                traceSingleWave(w, h);
+                ensureGradient(h);
+                paint.setShader(waveGradient);
+                canvas.drawPath(wavePath, paint);
+                paint.setShader(null);
             }
-            traceFilledWave(backgroundPath, backgroundY, left, right, h + 1f);
-            traceFilledWave(foregroundPath, foregroundY, left, right, h + 1f);
 
-            // Two translucent, filled curves: the second is broader, not random.
-            paint.setColor(Color.WHITE);
-            paint.setShader(backgroundGradient);
-            c.drawPath(backgroundPath, paint);
-            paint.setShader(foregroundGradient);
-            c.drawPath(foregroundPath, paint);
-            paint.setShader(null);
-
-            // Fine highlight along the leading edge. Do not trace the closed
-            // shape (which would also outline the left/right/bottom edges).
-            Path highlight = highlightPath;
-            highlight.rewind();
-            float step = (right - left) / CURVE_SAMPLES;
-            highlight.moveTo(left, foregroundY[0]);
-            for (int i = 1; i <= CURVE_SAMPLES; i++) {
-                float previousX = left + (i - 1) * step;
-                float currentX = left + i * step;
-                highlight.quadTo(previousX, foregroundY[i - 1],
-                        (previousX + currentX) / 2f,
-                        (foregroundY[i - 1] + foregroundY[i]) / 2f);
-            }
-            highlight.lineTo(right, foregroundY[CURVE_SAMPLES]);
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(d(.8f));
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setColor(Color.argb(105, Color.red(color), Color.green(color), Color.blue(color)));
-            c.drawPath(highlight, paint);
-            } // Paused/unavailable audio: no waves, gradients, or bottom color band.
-
-            // Without an explicit stroke here, pausing would fill the WHOLE card
-            // with the border color instead of preserving its transparency.
+            // Preserve a narrow rounded border, never flood-fill on pause.
             paint.setStyle(Paint.Style.STROKE);
             paint.setStrokeWidth(d(1));
             paint.setColor(borderColor);
-            c.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
+            canvas.drawRoundRect(new RectF(d(.5f), d(.5f), w - d(.5f), h - d(.5f)),
                     d(20), d(20), paint);
             paint.setStyle(Paint.Style.FILL);
         }
