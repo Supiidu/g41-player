@@ -155,6 +155,9 @@ public final class GlassOverlay {
 
     private GlassOverlay() {}
 
+    /** Safe, read-only signal for the new compact overlay. */
+    static boolean isOpen() { return root != null; }
+
     /** Returns true ONLY if a custom window was actually shown or closed. */
     public static boolean showOrToggle(Context app, Object event) {
         if (root != null) {
