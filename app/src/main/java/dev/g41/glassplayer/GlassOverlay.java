@@ -744,7 +744,7 @@ public final class GlassOverlay {
                     "g41_glass_cava_sensitivity", 1f);
             sensitivity = Math.max(.5f, Math.min(2.5f, configured));
             float treble = Settings.Global.getFloat(c.getContentResolver(),
-                    "g41_glass_cava_treble_boost", 1.25f);
+                    "g41_glass_cava_treble_boost", .80f);
             spectrum = new CavaSpectrum(treble);
             setAccent(accentColor);
             Log.i(TAG, "CAVA HD v0.9.0-beta4: agudos presentes, curva cubica,"
