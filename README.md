@@ -2,7 +2,7 @@
 
 **An experimental, audio-reactive lock-screen media interface for a Motorola Moto G41 repurposed as a dedicated music device.**
 
-![Version](https://img.shields.io/badge/version-0.10.0-beta1%20InfinityBar%20Compact-5965d9)
+![Version](https://img.shields.io/badge/version-0.10.0-beta2%20InfinityBar%20Native-5965d9)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Android](https://img.shields.io/badge/Android%20SDK-36-3ddc84)
 ![Status](https://img.shields.io/badge/status-experimental-f59e0b)
@@ -20,6 +20,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 
 ## Highlights
 
+- **InfinityBar compacta (v0.10.0 beta2, opt-in):** native chip visibility is suppressed through the ROM's own collapsed `AnimatedVisibility(boolean,...)` **only while our replacement is visible** and a media event is selected. Activation is separately guarded by `g41_glass_compact_hide_native=1` (defaults to off). No root ComposeView or unrelated notification/timer UI is hidden. Requires device validation; see `docs/TEST-v010-beta2.md`.
 - **InfinityBar compacta (v0.10.0 beta1, opt-in):** prototype Figma-style rounded translucent compact media bar, live square album artwork at left, title/artist in the center and play/pause at right, with blue FFT-reactive waves. Activated only on the lockscreen when the ROM has a selected media event. The original Compose chip is never modified or hidden; the preview overlays it, with adjustable bottom position. See `docs/TEST-v010-beta1.md` before enabling.
 
 - **Smooth CAVA HD Wave (v0.9.0 beta4):** one album-colored, edge-to-edge filled 2D FFT silhouette, bass at center and treble at both edges. Treble is clearer through real FFT peak/RMS blending, bounded treble EQ and neighboring-band spread; 5-tap spatial smoothing and monotone cubic curves round sharp crests. Monet/transparency and lower card placement preserved; no waves on pause.
