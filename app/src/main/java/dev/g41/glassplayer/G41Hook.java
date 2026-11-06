@@ -70,68 +70,59 @@ public final class G41Hook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Read-only hook on the actual ROM compact chip's Compose body.
-     * Never skip the body, replace its Modifier or hide Compose root Views.
-     * A separate opt-in overlay is created only after a confirmed pinned
-     * IslandEvent.Media and while the keyguard is locked.
+     * Observe the PARENT AxDynamicBarKeyguardChip composable, rather than its
+     * KeyguardChipBody child. After AnimatedVisibility hides the native chip,
+     * that child is no longer composed and cannot restart our compact preview
+     * when the screen wakes with music paused.
+     *
+     * Read-only, throttled, and deferred until after Compose has returned.
+     * No Compose result is skipped or changed by this observer.
      */
     private static void installCompactComposeProbe(ClassLoader loader) {
         try {
             Class<?> chip = XposedHelpers.findClass(CHIP_COMPOSABLE, loader);
             int count = 0;
             for (Method method : chip.getDeclaredMethods()) {
-                if (!method.getName().contains("KeyguardChipBody")
+                if (!"AxDynamicBarKeyguardChip".equals(method.getName())
                         || !Modifier.isStatic(method.getModifiers())) continue;
                 Class<?>[] types = method.getParameterTypes();
-                if (types.length < 7 || !types[0].getName().endsWith(".IslandEvent"))
+                if (types.length < 3
+                        || !types[0].getName().endsWith(".AxDynamicBarChipViewModel"))
                     continue;
-                int modelIndex = -1;
-                for (int i = 1; i < types.length; i++) {
-                    if (types[i].getName().endsWith(".AxDynamicBarChipViewModel")) {
-                        modelIndex = i;
-                        break;
-                    }
-                }
-                if (modelIndex < 0) continue;
-                final int idx = modelIndex;
                 XposedBridge.hookMethod(method, new XC_MethodHook() {
                     @Override protected void afterHookedMethod(MethodHookParam param) {
                         try {
                             if (Looper.myLooper() != Looper.getMainLooper()) return;
-                            Object current = param.args[0];
-                            if (!isMedia(current)) return;
                             long now = SystemClock.uptimeMillis();
-                            if (now - lastCompactObservation < 500L) return;
+                            if (now - lastCompactObservation < 450L) return;
                             lastCompactObservation = now;
-                            Object app = XposedHelpers.callStaticMethod(
+                            Object application = XposedHelpers.callStaticMethod(
                                     XposedHelpers.findClass("android.app.ActivityThread",
                                             loader), "currentApplication");
-                            if (!(app instanceof Application)) return;
-                            Context context = (Context) app;
-                            if (Settings.Global.getInt(context.getContentResolver(),
+                            if (!(application instanceof Application)) return;
+                            Context app = (Context) application;
+                            if (Settings.Global.getInt(app.getContentResolver(),
                                     "g41_glass_compact_preview", 0) != 1) return;
-                            Object viewModel = param.args[idx];
-                            if (viewModel == null) return;
+                            Object model = param.args[0];
+                            if (model == null) return;
                             Object expansion = XposedHelpers.getObjectField(
-                                    viewModel, "keyguardExpansion");
+                                    model, "keyguardExpansion");
                             Object pinned = selectedMedia(expansion);
                             if (pinned != null) {
-                                // Do not add a new WindowManager view reentrantly
-                                // during the Compose render pass. Defer to next loop.
                                 new android.os.Handler(Looper.getMainLooper()).post(() ->
-                                        CompactBarOverlay.observe(context, pinned, expansion));
+                                        CompactBarOverlay.observe(app, pinned, expansion));
                             }
                         } catch (Throwable t) {
-                            Log.w(TAG, "Compact probe: falha isolada; Compose original intacto", t);
+                            Log.w(TAG, "Compact probe: falha isolada, ROM original preservada", t);
                         }
                     }
                 });
                 count++;
             }
-            Log.i(TAG, "Compact probe v0.10: composables identificados=" + count
-                    + " (overlay opt-in; nativo preservado)");
+            Log.i(TAG, "Compact probe v0.10-beta3: composable PAI observado="
+                    + count + " (reativa barra mesmo apos pausa/screen-off)");
         } catch (Throwable t) {
-            Log.w(TAG, "Compact probe v0.10: classe nao encontrada; InfinityBar nativa", t);
+            Log.w(TAG, "Compact probe beta3: composable pai nao encontrado", t);
         }
     }
 
