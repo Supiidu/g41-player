@@ -2,7 +2,7 @@
 
 **An experimental, audio-reactive lock-screen media interface for a Motorola Moto G41 repurposed as a dedicated music device.**
 
-![Version](https://img.shields.io/badge/version-0.9.0-beta4%20CAVA%20Smooth-5965d9)
+![Version](https://img.shields.io/badge/version-0.10.0-beta1%20InfinityBar%20Compact-5965d9)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Android](https://img.shields.io/badge/Android%20SDK-36-3ddc84)
 ![Status](https://img.shields.io/badge/status-experimental-f59e0b)
@@ -19,6 +19,8 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 *Resumo em português:* uma interface experimental de música para a tela de bloqueio do Moto G41, com controles de reprodução, cores da capa e ondas que reagem ao áudio real.
 
 ## Highlights
+
+- **InfinityBar compacta (v0.10.0 beta1, opt-in):** prototype Figma-style rounded translucent compact media bar, live square album artwork at left, title/artist in the center and play/pause at right, with blue FFT-reactive waves. Activated only on the lockscreen when the ROM has a selected media event. The original Compose chip is never modified or hidden; the preview overlays it, with adjustable bottom position. See `docs/TEST-v010-beta1.md` before enabling.
 
 - **Smooth CAVA HD Wave (v0.9.0 beta4):** one album-colored, edge-to-edge filled 2D FFT silhouette, bass at center and treble at both edges. Treble is clearer through real FFT peak/RMS blending, bounded treble EQ and neighboring-band spread; 5-tap spatial smoothing and monotone cubic curves round sharp crests. Monet/transparency and lower card placement preserved; no waves on pause.
 - **Real audio response:** Android `Visualizer(0)` provides FFT data (24 frequency bands) or waveform RMS when available. The UI interpolates those measurements for smooth rendering; it does not invent beats or generate random music activity.
