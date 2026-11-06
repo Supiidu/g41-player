@@ -76,6 +76,8 @@ final class CompactBarOverlay {
     private static boolean playing;
     private static String lastArtworkKey;
     private static boolean warnedNoAudio;
+    private static long lastVisualizerAttempt;
+    private static boolean screenWasOff;
 
     private CompactBarOverlay() { }
 
@@ -97,7 +99,9 @@ final class CompactBarOverlay {
         expansion = mediaExpansion;
         currentEvent = selectedMedia;
         if (!allowed()) { hide(); return; }
-        if (card == null) show(selectedMedia);
+        // During screen-off keep any existing preview attached so a paused
+        // media chip remains hidden, but never create a new window in doze.
+        if (card == null && screenInteractive()) show(selectedMedia);
     }
 
     static void expandedChanged() {
@@ -115,6 +119,17 @@ final class CompactBarOverlay {
         }
     }
 
+    private static boolean screenInteractive() {
+        if (context == null) return false;
+        try {
+            PowerManager power = (PowerManager)
+                    context.getSystemService(Context.POWER_SERVICE);
+            return power == null || power.isInteractive();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     private static boolean allowed() {
         if (context == null || GlassOverlay.isOpen()) return false;
         try {
@@ -122,9 +137,10 @@ final class CompactBarOverlay {
                     || Settings.Global.getInt(context.getContentResolver(), SETTING, 0) != 1) {
                 return false;
             }
-            PowerManager power = (PowerManager)
-                    context.getSystemService(Context.POWER_SERVICE);
-            if (power != null && !power.isInteractive()) return false;
+            // Do NOT treat power-off as loss of keyguard/media ownership.
+            // The WindowManager window remains attached, without FFT capture,
+            // so paused music can resume on the lockscreen without a new
+            // native chip briefly taking over.
             KeyguardManager km = (KeyguardManager)
                     context.getSystemService(Context.KEYGUARD_SERVICE);
             return km != null && km.isKeyguardLocked();
@@ -233,8 +249,9 @@ final class CompactBarOverlay {
                 Object a = XposedHelpers.getObjectField(event, "albumArt");
                 if (a instanceof Drawable) cover.setImageDrawable((Drawable) a);
             } catch (Throwable ignored) { }
-            play.setPlaying(isEventPlaying(event));
-            startVisualizer();
+            playing = isEventPlaying(event);
+            play.setPlaying(playing);
+            if (playing && screenInteractive()) startVisualizer();
             MAIN.removeCallbacks(TICK);
             MAIN.post(TICK);
             Log.i(TAG, "Compact v0.10: prototipo Figma visivel, margem=" + lp.y
@@ -347,8 +364,9 @@ final class CompactBarOverlay {
     }
 
     private static void startVisualizer() {
+        if (GlassOverlay.isOpen() || !screenInteractive() || !playing) return;
         stopVisualizer();
-        warnedNoAudio = false;
+        lastVisualizerAttempt = SystemClock.uptimeMillis();
         latestFft = null;
         spectrum.reset();
         try {
@@ -388,14 +406,43 @@ final class CompactBarOverlay {
         @Override public void run() {
             if (card == null) return;
             if (!allowed()) { hide(); return; }
-            // The selected event may change to timer/call/notification while
-            // the Compose chip stays on screen. Never cover non-media chips.
+            // The display powers off independently of media playback.
+            // Keep the compact window (and native visibility suppression)
+            // attached during sleep, but release Visualizer to save battery.
+            if (!screenInteractive()) {
+                if (!screenWasOff) {
+                    screenWasOff = true;
+                    Log.i(TAG, "Compact v0.10-beta3: tela apagada; preservando"
+                            + " barra, liberando FFT compact");
+                }
+                stopVisualizer();
+                latestFft = null;
+                spectrum.reset();
+                if (wave != null) wave.invalidate();
+                MAIN.postDelayed(this, 600L);
+                return;
+            }
+            if (screenWasOff) {
+                screenWasOff = false;
+                Log.i(TAG, "Compact v0.10-beta3: tela ligada; retomando estado"
+                        + " da barra mesmo com musica pausada");
+            }
+            // The selected event may change to timer/call/notification.
             Object selected = G41Hook.selectedMedia(expansion);
             if (selected == null) { hide(); return; }
             currentEvent = selected;
             refreshMedia();
 
             long now = SystemClock.uptimeMillis();
+            if (!playing) {
+                if (visualizer != null) stopVisualizer();
+                latestFft = null;
+                lastVisualizerAttempt = 0L; // permit immediate start on resume
+            } else if (visualizer == null
+                    && now - lastVisualizerAttempt >= 4000L) {
+                // Retry if Android temporarily denies FFT, e.g. around wake.
+                startVisualizer();
+            }
             if (now - lastVisualRefresh >= 40L) {
                 lastVisualRefresh = now;
                 if (playing && latestFft != null)
@@ -507,6 +554,8 @@ final class CompactBarOverlay {
         lastArtworkKey = null;
         lastSessionRefresh = 0L;
         lastVisualRefresh = 0L;
+        lastVisualizerAttempt = 0L;
+        screenWasOff = false;
         if (old != null && oldWindow != null) {
             try { oldWindow.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Compact v0.10: erro ao remover", t); }
