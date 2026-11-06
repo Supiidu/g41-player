@@ -3,6 +3,19 @@
 > O player expandido v0.9.0 foi aprovado pelo autor e integrado à `main`.
 > Este é um **primeiro protótipo** da InfinityBar compacta, ainda não uma substituição completa do composable da ROM. O primeiro teste deve ocorrer com ADB e recuperação de bootloop disponíveis.
 
+## Direção da beta2: DAP-first (definida pelo autor)
+
+O G41 será usado prioritariamente como DAP. Para a experiência do usuário, só importa a barra de **música**:
+
+1. Renderizar somente a barra compacta personalizada ao reproduzir música — **não deixar a InfinityBar original duplicada**.
+2. Abrir o player expandido já aprovado ao tocar.
+3. Não criar trabalho extra de personalização para notificações, cronômetros ou Uber; eventos fora de mídia podem continuar nativos.
+4. Ao desativar o módulo, a barra original volta.
+
+**Restrição técnica mantida:** não ocultar a `AndroidComposeView` de tela inteira. O chip nativo pode compartilhar o mesmo Compose root com outros elementos do keyguard. Também não é seguro pular uma função `@Composable` sem preservar seus grupos de composição; um hook incorreto pode derrubar o SystemUI.
+
+O protótipo beta1 é uma janela adicional, não o resultado final. Para a beta2, precisamos identificar no `SystemUI-original.apk` do dispositivo o ponto exato de desenho do chip e ocultar **apenas o conteúdo de mídia**, com fallback via Settings.Global e restauração ao desligar. Se isso não for verificável, manter a beta1 como experimental em vez de ocultar a lockscreen inteira.
+
 ## Design retomado do Figma
 
 - Barra horizontal com cantos arredondados, **fundo claro e translúcido**, sem reproduzir/copiar o wallpaper.
