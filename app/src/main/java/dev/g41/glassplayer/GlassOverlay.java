@@ -155,6 +155,9 @@ public final class GlassOverlay {
 
     private GlassOverlay() {}
 
+    /** Safe, read-only signal for the new compact overlay. */
+    static boolean isOpen() { return root != null; }
+
     /** Returns true ONLY if a custom window was actually shown or closed. */
     public static boolean showOrToggle(Context app, Object event) {
         if (root != null) {
@@ -194,6 +197,11 @@ public final class GlassOverlay {
             wm.addView(candidate, lp);
 
             root = candidate;
+            // IMPORTANT: both compact and expanded use Android Visualizer(0).
+            // Release the compact effect BEFORE starting expanded capture,
+            // otherwise the compact FFT can starve the approved CAVA waves.
+            CompactBarOverlay.expandedChanged();
+            Log.i(TAG, "Audio FFT: compact liberado antes de iniciar expanded");
             hideLargeClockViews(); // leaves original wallpaper and depth effect intact
             CompactBarVisibility.hide(app, candidate); // v0.8: conservative chip hide
             startAudioCapture();
@@ -217,6 +225,9 @@ public final class GlassOverlay {
             restoreClockViews();
             CompactBarVisibility.restore();
             reset();
+            // If expanded creation failed after the compact visualizer was
+            // released, immediately restore the working compact preview.
+            CompactBarOverlay.expandedChanged();
             return false;
         }
     }
@@ -235,6 +246,9 @@ public final class GlassOverlay {
             try { oldWm.removeViewImmediate(old); }
             catch (Throwable t) { Log.w(TAG, "Falha ao fechar janela", t); }
         }
+        // Closing via backdrop, ESC or lifecycle must restore the compact
+        // media preview too. It will re-check keyguard/power/settings first.
+        CompactBarOverlay.expandedChanged();
         Log.i(TAG, "GLASS V0.8 FECHADO: clock e lockscreen restaurados");
     }
 
@@ -645,27 +659,36 @@ public final class GlassOverlay {
         Log.i(TAG, String.format(Locale.ROOT, "Paleta: album wave=#%06X", color & 0xFFFFFF));
     }
 
-    private static void applyColorsFromDrawable(Drawable art) {
-        if (art == null) { applyAccent(BLUE); return; }
+    /** Same album-art palette for expanded and compact CAVA waves. */
+    static int accentFromDrawable(Drawable art) {
+        if (art == null) return BLUE;
+        Bitmap scratch = null;
         try {
             Bitmap bitmap;
             if (art instanceof BitmapDrawable) {
                 bitmap = ((BitmapDrawable) art).getBitmap();
             } else {
-                // Render only a tiny copy. Do not mutate the original IslandEvent artwork.
-                bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
-                Canvas canvas = new Canvas(bitmap);
+                // Render a tiny copy; never mutate an IslandEvent Drawable.
+                scratch = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(scratch);
                 Drawable clone = art.getConstantState() == null ? null
                         : art.getConstantState().newDrawable().mutate();
-                if (clone == null) { applyAccent(BLUE); return; }
+                if (clone == null) return BLUE;
                 clone.setBounds(0, 0, 64, 64);
                 clone.draw(canvas);
+                bitmap = scratch;
             }
-            applyAccent(extractAccent(bitmap));
+            return extractAccent(bitmap);
         } catch (Throwable t) {
             Log.w(TAG, "Paleta: erro ao ler Drawable, usando azul padrao", t);
-            applyAccent(BLUE);
+            return BLUE;
+        } finally {
+            if (scratch != null) scratch.recycle();
         }
+    }
+
+    private static void applyColorsFromDrawable(Drawable art) {
+        applyAccent(accentFromDrawable(art));
     }
 
     /**
@@ -673,7 +696,7 @@ public final class GlassOverlay {
      * accumulate sufficiently saturated pixels by hue, then clamp saturation/value
      * for legibility on the white glass background.
      */
-    private static int extractAccent(Bitmap artwork) {
+    static int extractAccent(Bitmap artwork) {
         if (artwork == null || artwork.isRecycled()) return BLUE;
         Bitmap sampled = null;
         try {
@@ -892,22 +915,10 @@ public final class GlassOverlay {
                 }
                 return;
             }
-            p.setStyle(Paint.Style.STROKE);
-            boolean prev = kind==0;
-            float arrowX = cx + (prev ? d(4) : -d(4));
-            Path triangle = new Path();
-            if (prev) {
-                triangle.moveTo(arrowX+d(7),cy-d(7));
-                triangle.lineTo(arrowX-d(5),cy);
-                triangle.lineTo(arrowX+d(7),cy+d(7));
-                c.drawLine(arrowX-d(8),cy-d(8),arrowX-d(8),cy+d(8),p);
-            } else {
-                triangle.moveTo(arrowX-d(7),cy-d(7));
-                triangle.lineTo(arrowX+d(5),cy);
-                triangle.lineTo(arrowX-d(7),cy+d(7));
-                c.drawLine(arrowX+d(8),cy-d(8),arrowX+d(8),cy+d(8),p);
-            }
-            c.drawPath(triangle,p);
+            // User-selected Basil Skip Prev/Next Outline SVG paths, rendered
+            // as exact Canvas geometry: no app-resource dependency inside
+            // com.android.systemui, and the existing Monet controlsColor applies.
+            BasilTransportIcons.draw(c, p, kind == 0, cx, cy, d(48));
         }
     }
 
