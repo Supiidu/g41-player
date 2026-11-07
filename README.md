@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:324F86,45:5F9FD0,100:9ADCE3&height=205&section=header&text=G41%20Glass%20Player&fontSize=43&fontColor=ffffff&fontAlignY=39&desc=Give%20your%20music%20a%20lockscreen%20of%20its%20own&descSize=17&descAlignY=61" alt="G41 Glass Player" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:6659A8,45:418FB5,100:56BFA9&height=205&section=header&text=G41%20Glass%20Player&fontSize=43&fontColor=ffffff&fontAlignY=39&desc=Give%20your%20music%20a%20lockscreen%20of%20its%20own&descSize=17&descAlignY=61" alt="G41 Glass Player" width="100%" />
 
 **A music-first, audio-reactive lockscreen for a Motorola Moto G41 turned into a DAP.**
 
@@ -285,7 +285,7 @@ This is a personal experimental project. Focused issues and PRs are welcome; ple
 <!-- readme-gen:start:footer -->
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:324F86,45:5F9FD0,100:9ADCE3&height=85&section=footer" width="100%" alt="" />
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:6659A8,45:418FB5,100:56BFA9&height=85&section=footer" width="100%" alt="" />
 
 <sub>Built and tested on a Moto G41. Made for a second life in music.</sub>
 
