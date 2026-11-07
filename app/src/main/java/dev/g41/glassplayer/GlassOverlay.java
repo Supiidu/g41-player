@@ -915,22 +915,10 @@ public final class GlassOverlay {
                 }
                 return;
             }
-            p.setStyle(Paint.Style.STROKE);
-            boolean prev = kind==0;
-            float arrowX = cx + (prev ? d(4) : -d(4));
-            Path triangle = new Path();
-            if (prev) {
-                triangle.moveTo(arrowX+d(7),cy-d(7));
-                triangle.lineTo(arrowX-d(5),cy);
-                triangle.lineTo(arrowX+d(7),cy+d(7));
-                c.drawLine(arrowX-d(8),cy-d(8),arrowX-d(8),cy+d(8),p);
-            } else {
-                triangle.moveTo(arrowX-d(7),cy-d(7));
-                triangle.lineTo(arrowX+d(5),cy);
-                triangle.lineTo(arrowX-d(7),cy+d(7));
-                c.drawLine(arrowX+d(8),cy-d(8),arrowX+d(8),cy+d(8),p);
-            }
-            c.drawPath(triangle,p);
+            // User-selected Basil Skip Prev/Next Outline SVG paths, rendered
+            // as exact Canvas geometry: no app-resource dependency inside
+            // com.android.systemui, and the existing Monet controlsColor applies.
+            BasilTransportIcons.draw(c, p, kind == 0, cx, cy, d(48));
         }
     }
 
