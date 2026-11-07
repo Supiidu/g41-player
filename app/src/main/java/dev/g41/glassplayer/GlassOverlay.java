@@ -659,27 +659,36 @@ public final class GlassOverlay {
         Log.i(TAG, String.format(Locale.ROOT, "Paleta: album wave=#%06X", color & 0xFFFFFF));
     }
 
-    private static void applyColorsFromDrawable(Drawable art) {
-        if (art == null) { applyAccent(BLUE); return; }
+    /** Same album-art palette for expanded and compact CAVA waves. */
+    static int accentFromDrawable(Drawable art) {
+        if (art == null) return BLUE;
+        Bitmap scratch = null;
         try {
             Bitmap bitmap;
             if (art instanceof BitmapDrawable) {
                 bitmap = ((BitmapDrawable) art).getBitmap();
             } else {
-                // Render only a tiny copy. Do not mutate the original IslandEvent artwork.
-                bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
-                Canvas canvas = new Canvas(bitmap);
+                // Render a tiny copy; never mutate an IslandEvent Drawable.
+                scratch = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(scratch);
                 Drawable clone = art.getConstantState() == null ? null
                         : art.getConstantState().newDrawable().mutate();
-                if (clone == null) { applyAccent(BLUE); return; }
+                if (clone == null) return BLUE;
                 clone.setBounds(0, 0, 64, 64);
                 clone.draw(canvas);
+                bitmap = scratch;
             }
-            applyAccent(extractAccent(bitmap));
+            return extractAccent(bitmap);
         } catch (Throwable t) {
             Log.w(TAG, "Paleta: erro ao ler Drawable, usando azul padrao", t);
-            applyAccent(BLUE);
+            return BLUE;
+        } finally {
+            if (scratch != null) scratch.recycle();
         }
+    }
+
+    private static void applyColorsFromDrawable(Drawable art) {
+        applyAccent(accentFromDrawable(art));
     }
 
     /**
@@ -687,7 +696,7 @@ public final class GlassOverlay {
      * accumulate sufficiently saturated pixels by hue, then clamp saturation/value
      * for legibility on the white glass background.
      */
-    private static int extractAccent(Bitmap artwork) {
+    static int extractAccent(Bitmap artwork) {
         if (artwork == null || artwork.isRecycled()) return BLUE;
         Bitmap sampled = null;
         try {
