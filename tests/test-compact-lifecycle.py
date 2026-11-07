@@ -66,7 +66,12 @@ checks = {
         and "if (card == null && canShowWindow())" in compact,
     "AOD restore remains triggered on expanded close":
         "CompactBarOverlay.expandedChanged();" in glass.split("public static void hide()")[1]
-        and "if (media != null) observe(context, media, expansion);" in compact,
+        and "Object media = G41Hook.selectedMedia(expansion);" in compact
+        and "observe(context, media, expansion);" in compact,
+    "AOD OFF-to-DOZE transition has bounded restore retries":
+        "retryAodRestore(6);" in compact
+        and "if (remaining <= 0) return;" in compact
+        and "if (card == null) retryAodRestore(remaining - 1);" in compact,
     "actual ROM primary bouncer method hooked read-only":
         '"notifyPrimaryBouncerShowing", boolean.class' in keyguard
         and 'getBooleanField(' in keyguard
