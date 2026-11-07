@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Static regression checks for the Moto G41 InfinityBar v0.10-beta3.
+"""Static regression checks for the Moto G41 InfinityBar v0.10-beta4.
 
 Does NOT compile the Android app or verify SystemUI runtime behavior.
 Run from the repository root: python3 tests/test-compact-lifecycle.py
@@ -12,6 +12,7 @@ glass = (src / "GlassOverlay.java").read_text()
 compact = (src / "CompactBarOverlay.java").read_text()
 native = (src / "NativeMediaChipVisibility.java").read_text()
 hook = (src / "G41Hook.java").read_text()
+keyguard = (src / "KeyguardUiState.java").read_text()
 build = (root / "app/build.gradle").read_text()
 
 checks = {
@@ -59,8 +60,48 @@ checks = {
         "return false;" in native.split("private static boolean maySuppress")[1],
     "player approved treble boost remains unchanged":
         '"g41_glass_cava_treble_boost", .80f' in glass,
-    "beta3 versionCode increments":
-        "versionCode 19" in build and "0.10.0-beta3-audio-handoff" in build,
+    "AOD can recreate compact when non-interactive":
+        "Display.STATE_DOZE" in compact
+        and "Display.STATE_DOZE_SUSPEND" in compact
+        and "if (card == null && canShowWindow())" in compact,
+    "AOD restore remains triggered on expanded close":
+        "CompactBarOverlay.expandedChanged();" in glass.split("public static void hide()")[1]
+        and "if (media != null) observe(context, media, expansion);" in compact,
+    "actual ROM primary bouncer method hooked read-only":
+        '"notifyPrimaryBouncerShowing", boolean.class' in keyguard
+        and 'getBooleanField(' in keyguard
+        and '"mPrimaryBouncerShowing"' in keyguard
+        and "KeyguardUiState.install(lp.classLoader);" in hook,
+    "PIN hides compact without destroying media window":
+        "private static void suspendForBouncer()" in compact
+        and "card.setVisibility(View.INVISIBLE);" in compact
+        and "stopVisualizer();" in compact.split(
+            "private static void suspendForBouncer()")[1].split(
+            "static void onBouncerChanged")[0],
+    "PIN bouncer has immediate state callback":
+        "static void onBouncerChanged(boolean showing)" in compact
+        and "CompactBarOverlay.onBouncerChanged(showing);" in keyguard,
+    "PIN exit can restore compact":
+        "card.setVisibility(View.VISIBLE);" in compact
+        and "if (KeyguardUiState.isBouncerShowing())" in compact,
+    "ROM native chip guard does not interfere with PIN":
+        "KeyguardUiState.isBouncerShowing()" in native,
+    "compact uses exact same cover accent code as expanded":
+        "static int extractAccent(Bitmap artwork)" in glass
+        and "static int accentFromDrawable(Drawable art)" in glass
+        and "GlassOverlay.accentFromDrawable(artwork)" in compact
+        and "GlassOverlay.extractAccent(b)" in compact,
+    "compact wave uses album-color gradient like expanded":
+        "new LinearGradient(" in compact
+        and "Color.argb(168, red, green, blue)" in compact
+        and "pen.setShader(gradient);" in compact
+        and "pen.setColor(0x444E94DB)" not in compact,
+    "approved expanded player color method still runs":
+        "applyAccent(accentFromDrawable(art));" in glass
+        and "applyAccent(extractAccent(art));" in glass,
+    "beta4 versionCode increments":
+        "versionCode 20" in build
+        and "0.10.0-beta4-aod-bouncer-album-wave" in build,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
