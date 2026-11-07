@@ -65,6 +65,7 @@ public final class G41Hook implements IXposedHookLoadPackage {
         } catch (Throwable t) {
             Log.e(TAG, "Hook expand() indisponivel. Modulo nao interfere no SystemUI.", t);
         }
+        KeyguardUiState.install(lp.classLoader); // observe PIN bouncer, don't modify it
         installCompactComposeProbe(lp.classLoader);
         NativeMediaChipVisibility.install(lp.classLoader); // opt-in; original remains fallback
     }
