@@ -16,7 +16,7 @@ O usuário confirmou que a beta3 funciona na lockscreen e no Always On Display e
 
 `CompactBarOverlay.observe()` não limita mais criação da janela a `PowerManager.isInteractive()`. Permite criar quando o display estiver `Display.STATE_DOZE` ou `Display.STATE_DOZE_SUSPEND` (AOD), sem iniciar o `Visualizer(0)` nessas situações. Continuamos evitando criar a janela com display completamente apagado (`Display.STATE_OFF`).
 
-A transição expanded → compact já chama `CompactBarOverlay.expandedChanged()`, que pode reconstruir a barra mesmo sem interação do usuário, desde que o display esteja exibindo o AOD.
+A transição expanded → compact já chama `CompactBarOverlay.expandedChanged()`, que pode reconstruir a barra mesmo sem interação do usuário, desde que o display esteja exibindo o AOD. Se a tela estiver temporariamente em `STATE_OFF` enquanto passa para DOZE, a beta4 faz até **seis tentativas espaçadas em 450 ms**, interrompendo ao restaurar ou quando o evento de mídia deixa de existir.
 
 ### Esconder compacta na tela de senha
 
