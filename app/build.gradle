@@ -10,8 +10,8 @@ android {
         applicationId 'dev.g41.glassplayer'
         minSdk 28
         targetSdk 35
-        versionCode 19
-        versionName '0.10.0-beta3-audio-handoff'
+        versionCode 20
+        versionName '0.10.0-beta4-aod-bouncer-album-wave'
     }
 
     buildTypes {
