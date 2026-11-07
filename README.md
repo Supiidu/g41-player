@@ -2,7 +2,7 @@
 
 **An experimental, audio-reactive lock-screen media interface for a Motorola Moto G41 repurposed as a dedicated music device.**
 
-![Version](https://img.shields.io/badge/version-0.10.0-beta3%20InfinityBar%20Handoff-5965d9)
+![Version](https://img.shields.io/badge/version-0.10.0-beta4%20InfinityBar%20Polish-5965d9)
 ![Java](https://img.shields.io/badge/Java-17-orange)
 ![Android](https://img.shields.io/badge/Android%20SDK-36-3ddc84)
 ![Status](https://img.shields.io/badge/status-experimental-f59e0b)
@@ -20,6 +20,7 @@ The goal is to give an older **Moto G41** a second life as a dedicated digital a
 
 ## Highlights
 
+- **InfinityBar compacta (v0.10.0 beta4, opt-in):** fixes AOD restoration after closing expanded (DOZE display is visible despite non-interactive PowerManager state), hides the custom compact bar on the actual PIN bouncer via a read-only `KeyguardStateControllerImpl.notifyPrimaryBouncerShowing(boolean)` hook, and colors mini-waves with the **exact same album-art accent extraction and gradient palette as the approved expanded CAVA**. Keeps all beta3 audio-handoff fixes, original Compose fallback and opt-in toggles. See `docs/TEST-v010-beta4.md`.
 - **InfinityBar compacta (v0.10.0 beta3, opt-in):** fixes the 3 device-observed issues: release the compact `Visualizer(0)` **before** the approved expanded player starts FFT capture, keep native media chip hidden while either compact or expanded is on screen, and preserve compact window across screen-off (FFT released while sleeping) so paused media does not expose native chip. The read-only parent Compose observer can rearm after wake. See `docs/TEST-v010-beta3.md`.
 - **InfinityBar compacta (v0.10.0 beta2, opt-in):** native chip visibility is suppressed through the ROM's own collapsed `AnimatedVisibility(boolean,...)` **only while our replacement is visible** and a media event is selected. Activation is separately guarded by `g41_glass_compact_hide_native=1` (defaults to off). No root ComposeView or unrelated notification/timer UI is hidden. Requires device validation; see `docs/TEST-v010-beta2.md`.
 - **InfinityBar compacta (v0.10.0 beta1, opt-in):** prototype Figma-style rounded translucent compact media bar, live square album artwork at left, title/artist in the center and play/pause at right, with blue FFT-reactive waves. Activated only on the lockscreen when the ROM has a selected media event. The original Compose chip is never modified or hidden; the preview overlays it, with adjustable bottom position. See `docs/TEST-v010-beta1.md` before enabling.
