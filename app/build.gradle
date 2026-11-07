@@ -10,8 +10,8 @@ android {
         applicationId 'dev.g41.glassplayer'
         minSdk 28
         targetSdk 35
-        versionCode 20
-        versionName '0.10.0-beta4-aod-bouncer-album-wave'
+        versionCode 21
+        versionName '0.10.0-beta5-basil-transport-icons'
     }
 
     buildTypes {
