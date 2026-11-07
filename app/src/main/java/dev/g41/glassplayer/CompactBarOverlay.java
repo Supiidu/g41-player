@@ -651,7 +651,7 @@ final class CompactBarOverlay {
                 int red = Color.red(accent);
                 int green = Color.green(accent);
                 int blue = Color.blue(accent);
-                gradient = new LinearGradient(0f, h * .55f, 0f, h,
+                gradient = new LinearGradient(0f, h * .70f, 0f, h,
                         new int[]{
                                 Color.argb(168, red, green, blue),
                                 Color.argb(140, red, green, blue),
