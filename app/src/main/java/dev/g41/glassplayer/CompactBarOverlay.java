@@ -130,8 +130,29 @@ final class CompactBarOverlay {
             // The original Compose chip may not recompose just because our
             // expanded window closed. Re-evaluate pinned media directly.
             Object media = G41Hook.selectedMedia(expansion);
-            if (media != null) observe(context, media, expansion);
+            if (media != null) {
+                observe(context, media, expansion);
+                if (card == null && !KeyguardUiState.isBouncerShowing()) {
+                    // AOD may briefly report STATE_OFF during the transition
+                    // to DOZE. Retry a few times, then stop to avoid work
+                    // during a genuinely fully powered-off display.
+                    retryAodRestore(6);
+                }
+            }
         }
+    }
+
+    private static void retryAodRestore(int remaining) {
+        if (remaining <= 0) return;
+        MAIN.postDelayed(() -> {
+            if (card != null || GlassOverlay.isOpen()
+                    || context == null || expansion == null
+                    || KeyguardUiState.isBouncerShowing()) return;
+            Object media = G41Hook.selectedMedia(expansion);
+            if (media == null) return;
+            observe(context, media, expansion);
+            if (card == null) retryAodRestore(remaining - 1);
+        }, 450L);
     }
 
     private static boolean screenInteractive() {
