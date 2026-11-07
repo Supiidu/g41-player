@@ -108,7 +108,9 @@ final class NativeMediaChipVisibility {
     private static boolean maySuppress(Object viewModel, ClassLoader loader) {
         // The expanded glass player replaces the compact preview. Keep the
         // ROM chip hidden for BOTH states, including the handoff between them.
+        // Never override the ROM's own visibility rules at the PIN prompt.
         if (viewModel == null || Looper.myLooper() != Looper.getMainLooper()
+                || KeyguardUiState.isBouncerShowing()
                 || (!CompactBarOverlay.isVisible() && !GlassOverlay.isOpen())) {
             return false;
         }
