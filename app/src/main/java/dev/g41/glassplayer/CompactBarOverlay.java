@@ -3,6 +3,9 @@ package dev.g41.glassplayer;
 import android.app.KeyguardManager;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.LinearGradient;
+import android.graphics.Shader;
 import android.graphics.Outline;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -23,6 +26,7 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Display;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -81,8 +85,10 @@ final class CompactBarOverlay {
 
     private CompactBarOverlay() { }
 
-    /** Only suppress the native Compose chip after our replacement was added. */
-    static boolean isVisible() { return card != null; }
+    /** Only suppress the native Compose chip while our window is actually drawn. */
+    static boolean isVisible() {
+        return card != null && card.getVisibility() == View.VISIBLE;
+    }
 
     private static int dp(float value) {
         if (context == null) return Math.round(value);
@@ -98,10 +104,19 @@ final class CompactBarOverlay {
         context = app;
         expansion = mediaExpansion;
         currentEvent = selectedMedia;
+        if (KeyguardUiState.isBouncerShowing()) {
+            suspendForBouncer();
+            return;
+        }
         if (!allowed()) { hide(); return; }
-        // During screen-off keep any existing preview attached so a paused
-        // media chip remains hidden, but never create a new window in doze.
-        if (card == null && screenInteractive()) show(selectedMedia);
+        // Interactive lockscreen OR visible Always On Display: the AOD may
+        // report PowerManager.isInteractive() == false yet still show pixels.
+        if (card == null && canShowWindow()) {
+            show(selectedMedia);
+        } else if (card != null && card.getVisibility() != View.VISIBLE) {
+            card.setVisibility(View.VISIBLE);
+            Log.i(TAG, "Compact v0.10-beta4: retorno da tela de senha");
+        }
     }
 
     static void expandedChanged() {
@@ -130,8 +145,59 @@ final class CompactBarOverlay {
         }
     }
 
+    /** AOD is visible while PowerManager.isInteractive() is commonly false. */
+    private static boolean aodVisible() {
+        if (context == null) return false;
+        try {
+            WindowManager manager = (WindowManager)
+                    context.getSystemService(Context.WINDOW_SERVICE);
+            Display display = manager == null ? null : manager.getDefaultDisplay();
+            if (display == null) return false;
+            int state = display.getState();
+            return state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static boolean canShowWindow() {
+        return screenInteractive() || aodVisible();
+    }
+
+    /** Hide the overlay at the native PIN prompt, without losing media state. */
+    private static void suspendForBouncer() {
+        if (card == null) return;
+        if (card.getVisibility() != View.INVISIBLE) {
+            card.setVisibility(View.INVISIBLE);
+            Log.i(TAG, "Compact v0.10-beta4: barra oculta na tela de senha");
+        }
+        stopVisualizer();
+        latestFft = null;
+        spectrum.reset();
+        if (wave != null) wave.invalidate();
+    }
+
+    static void onBouncerChanged(boolean showing) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            MAIN.post(() -> onBouncerChanged(showing));
+            return;
+        }
+        if (showing) {
+            suspendForBouncer();
+        } else if (card != null && allowed()) {
+            card.setVisibility(View.VISIBLE);
+            MAIN.removeCallbacks(TICK);
+            MAIN.post(TICK);
+        } else if (context != null && expansion != null && !GlassOverlay.isOpen()) {
+            // Parent Compose may not recompose after a paused-media PIN prompt.
+            Object media = G41Hook.selectedMedia(expansion);
+            if (media != null) observe(context, media, expansion);
+        }
+    }
+
     private static boolean allowed() {
-        if (context == null || GlassOverlay.isOpen()) return false;
+        if (context == null || GlassOverlay.isOpen()
+                || KeyguardUiState.isBouncerShowing()) return false;
         try {
             if (Settings.Global.getInt(context.getContentResolver(), G41Hook.SETTING, 0) != 1
                     || Settings.Global.getInt(context.getContentResolver(), SETTING, 0) != 1) {
@@ -247,7 +313,12 @@ final class CompactBarOverlay {
             artist.setText(readString(event, "artist", ""));
             try {
                 Object a = XposedHelpers.getObjectField(event, "albumArt");
-                if (a instanceof Drawable) cover.setImageDrawable((Drawable) a);
+                if (a instanceof Drawable) {
+                    Drawable artwork = (Drawable) a;
+                    cover.setImageDrawable(artwork);
+                    // The expanded player uses the same extraction routine.
+                    wave.setAccent(GlassOverlay.accentFromDrawable(artwork));
+                }
             } catch (Throwable ignored) { }
             playing = isEventPlaying(event);
             play.setPlaying(playing);
@@ -356,7 +427,13 @@ final class CompactBarOverlay {
                 android.graphics.Bitmap b = data.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
                 if (b == null) b = data.getBitmap(MediaMetadata.METADATA_KEY_ART);
                 if (b == null) b = data.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
-                if (b != null) cover.setImageBitmap(b);
+                if (b != null) {
+                    cover.setImageBitmap(b);
+                    if (wave != null) wave.setAccent(GlassOverlay.extractAccent(b));
+                } else if (wave != null && cover.getDrawable() != null) {
+                    wave.setAccent(GlassOverlay.accentFromDrawable(
+                            cover.getDrawable()));
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "Compact v0.10: dados de midia indisponiveis", t);
@@ -405,7 +482,15 @@ final class CompactBarOverlay {
     private static final Runnable TICK = new Runnable() {
         @Override public void run() {
             if (card == null) return;
+            if (KeyguardUiState.isBouncerShowing()) {
+                suspendForBouncer();
+                MAIN.postDelayed(this, 300L);
+                return;
+            }
             if (!allowed()) { hide(); return; }
+            if (card.getVisibility() != View.VISIBLE) {
+                card.setVisibility(View.VISIBLE);
+            }
             // The display powers off independently of media playback.
             // Keep the compact window (and native visibility suppression)
             // attached during sleep, but release Visualizer to save battery.
@@ -489,8 +574,24 @@ final class CompactBarOverlay {
         private final Path shape = new Path();
         private final Paint pen = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final float[] y = new float[WAVE_POINTS + 1];
+        private int accent = 0xFF0857DB; // fallback when no artwork exists
+        private Shader gradient;
 
         MiniWave(Context c) { super(c); }
+
+        void setAccent(int color) {
+            if (accent == color) return;
+            accent = color;
+            gradient = null;
+            invalidate();
+            Log.i(TAG, String.format(java.util.Locale.ROOT,
+                    "Compact v0.10-beta4: album wave=#%06X", color & 0xFFFFFF));
+        }
+
+        @Override protected void onSizeChanged(int w, int h, int oldW, int oldH) {
+            super.onSizeChanged(w, h, oldW, oldH);
+            gradient = null;
+        }
         private float tangentAt(int index) {
             if (index <= 0 || index >= WAVE_POINTS) return 0f;
             float left = y[index] - y[index - 1];
@@ -525,10 +626,21 @@ final class CompactBarOverlay {
             shape.lineTo(w, h + 1f);
             shape.close();
 
-            pen.setShader(null);
+            if (gradient == null) {
+                int red = Color.red(accent);
+                int green = Color.green(accent);
+                int blue = Color.blue(accent);
+                gradient = new LinearGradient(0f, h * .55f, 0f, h,
+                        new int[]{
+                                Color.argb(168, red, green, blue),
+                                Color.argb(140, red, green, blue),
+                                Color.argb(95, red, green, blue)
+                        }, new float[]{0f, .60f, 1f}, Shader.TileMode.CLAMP);
+            }
             pen.setStyle(Paint.Style.FILL);
-            pen.setColor(0x444E94DB);
+            pen.setShader(gradient);
             canvas.drawPath(shape, pen);
+            pen.setShader(null);
         }
     }
 
