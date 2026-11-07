@@ -7,7 +7,7 @@
 *An experimental Infinity X SystemUI customization — not another music player.*
 
 <!-- readme-gen:start:badges -->
-![Version](https://img.shields.io/badge/version-0.10.0-5-456da8?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.10.0--beta5-456da8?style=flat-square)
 ![Android](https://img.shields.io/badge/target-Android%2016-3f8fbf?style=flat-square&logo=android&logoColor=white)
 ![Java](https://img.shields.io/badge/Java-17-547bbb?style=flat-square&logo=openjdk&logoColor=white)
 ![Status](https://img.shields.io/badge/status-experimental-e7a54e?style=flat-square)
